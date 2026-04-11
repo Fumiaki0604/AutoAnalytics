@@ -1,0 +1,27 @@
+# 環境変数（API キーを絶対にコミットしない）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# DuckDB データファイル（ローカルデータ）
+data/*.duckdb
+data/*.db
+
+# レポート出力（生成物）
+reports/*.md
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

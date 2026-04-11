@@ -1,0 +1,6 @@
+# LLM 設定
+# Anthropic API を使う場合の設定値
+# モデルを Bedrock に切り替える際はここを変更するだけでよい
+
+model: claude-sonnet-4-6
+max_tokens: 4096
