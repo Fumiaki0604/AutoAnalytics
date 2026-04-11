@@ -30,12 +30,11 @@ def load_prompt(path: str) -> str:
     return p.read_text(encoding="utf-8")
 
 
-def build_schema_info(db: DuckDBClient, table: str) -> str:
+def build_data_context(db: DuckDBClient, table: str) -> str:
     try:
-        rows = db.get_schema(table)
-        return "\n".join(f"- {r['column_name']}: {r['column_type']}" for r in rows)
+        return db.get_data_context(table)
     except Exception as e:
-        return f"スキーマ取得失敗: {e}"
+        return f"データコンテキスト取得失敗: {e}"
 
 
 def format_query_result(rows: list[dict[str, Any]], max_rows: int = 10) -> str:
@@ -103,7 +102,7 @@ def main() -> None:
 
         # Step 3: 仮説生成 & SQL 実行
         print("\n[3/4] 仮説を生成・検証中...")
-        schema_info = build_schema_info(db, parsed.target_table)
+        schema_info = build_data_context(db, parsed.target_table)
         hypotheses = HypothesisGenerator(llm, system_prompt, hypothesis_prompt).generate(
             parsed, schema_info
         )

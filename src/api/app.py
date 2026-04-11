@@ -42,12 +42,11 @@ def _load_prompt(name: str) -> str:
     return (PROMPTS_DIR / name).read_text(encoding="utf-8")
 
 
-def _schema_info(db: DuckDBClient, table: str) -> str:
+def _data_context(db: DuckDBClient, table: str) -> str:
     try:
-        rows = db.get_schema(table)
-        return "\n".join(f"- {r['column_name']}: {r['column_type']}" for r in rows)
+        return db.get_data_context(table)
     except Exception as e:
-        return f"スキーマ取得失敗: {e}"
+        return f"データコンテキスト取得失敗: {e}"
 
 
 def _fmt_result(rows: list[dict], max_rows: int = 10) -> str:
@@ -109,10 +108,10 @@ def _run_analysis(
 
             # Step 3: 仮説生成 & SQL 実行
             emit({"step": 3, "status": "running", "message": "仮説を生成中..."})
-            schema = _schema_info(db, parsed.target_table)
+            context = _data_context(db, parsed.target_table)
             hypotheses: list[Hypothesis] = HypothesisGenerator(
                 llm, system_prompt, hypothesis_prompt
-            ).generate(parsed, schema)
+            ).generate(parsed, context)
 
             for h in hypotheses:
                 emit({"step": 3, "status": "running", "message": f"仮説 {h.index} を検証中: {h.title[:40]}..."})

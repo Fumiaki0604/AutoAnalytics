@@ -43,6 +43,50 @@ class DuckDBClient:
         """テーブルのカラム定義を返す。"""
         return self.query(f"DESCRIBE {table}")
 
+    def get_data_context(self, table: str, sample_rows: int = 3) -> str:
+        """スキーマ・サンプル行・カラム値域を LLM に渡すための文字列を返す。
+
+        これを渡すことで LLM が実データの日付・値域を把握し、
+        WHERE 句などに正確な値を使えるようになる。
+        """
+        schema = self.get_schema(table)
+
+        # サンプル行
+        sample = self.query(f'SELECT * FROM "{table}" LIMIT {sample_rows}')
+
+        # 全カラムの min / max
+        stats: dict[str, tuple] = {}
+        for col_info in schema:
+            col = col_info["column_name"]
+            try:
+                row = self.query(
+                    f'SELECT MIN("{col}") AS mn, MAX("{col}") AS mx FROM "{table}"'
+                )[0]
+                stats[col] = (row["mn"], row["mx"])
+            except Exception:
+                pass
+
+        # --- フォーマット ---
+        lines: list[str] = []
+
+        lines.append("### スキーマ")
+        for s in schema:
+            lines.append(f"- {s['column_name']}: {s['column_type']}")
+
+        if sample:
+            lines.append("\n### サンプルデータ（先頭 3 行）")
+            headers = list(sample[0].keys())
+            lines.append(" | ".join(headers))
+            for row in sample:
+                lines.append(" | ".join(str(v) for v in row.values()))
+
+        if stats:
+            lines.append("\n### カラムの値域（min 〜 max）")
+            for col, (mn, mx) in stats.items():
+                lines.append(f"- {col}: {mn} 〜 {mx}")
+
+        return "\n".join(lines)
+
     def list_tables(self) -> list[str]:
         """DB 内のテーブル一覧を返す。"""
         rows = self.query("SHOW TABLES")

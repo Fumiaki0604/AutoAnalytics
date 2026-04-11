@@ -32,13 +32,13 @@ class HypothesisGenerator:
         self.system_prompt = system_prompt
         self.template = hypothesis_prompt_template
 
-    def generate(self, parsed: ParsedRequest, schema_info: str) -> list[Hypothesis]:
+    def generate(self, parsed: ParsedRequest, data_context: str) -> list[Hypothesis]:
         prompt = self.template.format(
             summary=parsed.summary,
             kpi=parsed.kpi,
             dimensions=", ".join(parsed.dimensions) if parsed.dimensions else "指定なし",
             table=parsed.target_table,
-            schema=schema_info,
+            data_context=data_context,
         )
 
         response = self.llm.complete(
