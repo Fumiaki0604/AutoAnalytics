@@ -54,17 +54,40 @@ class DuckDBClient:
         # サンプル行
         sample = self.query(f'SELECT * FROM "{table}" LIMIT {sample_rows}')
 
-        # 全カラムの min / max
-        stats: dict[str, tuple] = {}
+        # カラムごとの統計情報を収集
+        numeric_stats: dict[str, tuple] = {}
+        categorical_values: dict[str, list] = {}
+
         for col_info in schema:
             col = col_info["column_name"]
-            try:
-                row = self.query(
-                    f'SELECT MIN("{col}") AS mn, MAX("{col}") AS mx FROM "{table}"'
-                )[0]
-                stats[col] = (row["mn"], row["mx"])
-            except Exception:
-                pass
+            col_type = col_info.get("column_type", "").upper()
+            is_text = any(t in col_type for t in ("VARCHAR", "TEXT", "CHAR", "STRING", "ENUM"))
+            is_bool = "BOOL" in col_type
+
+            if is_bool:
+                continue
+
+            if is_text:
+                # カテゴリ列: ユニーク値の上位 10 件
+                try:
+                    rows = self.query(
+                        f'SELECT DISTINCT "{col}" FROM "{table}" '
+                        f'ORDER BY "{col}" LIMIT 10'
+                    )
+                    vals = [str(list(r.values())[0]) for r in rows if list(r.values())[0] is not None]
+                    if vals:
+                        categorical_values[col] = vals
+                except Exception:
+                    pass
+            else:
+                # 数値・日付列: min / max
+                try:
+                    row = self.query(
+                        f'SELECT MIN("{col}") AS mn, MAX("{col}") AS mx FROM "{table}"'
+                    )[0]
+                    numeric_stats[col] = (row["mn"], row["mx"])
+                except Exception:
+                    pass
 
         # --- フォーマット ---
         lines: list[str] = []
@@ -80,10 +103,15 @@ class DuckDBClient:
             for row in sample:
                 lines.append(" | ".join(str(v) for v in row.values()))
 
-        if stats:
-            lines.append("\n### カラムの値域（min 〜 max）")
-            for col, (mn, mx) in stats.items():
+        if numeric_stats:
+            lines.append("\n### 数値・日付カラムの値域（min 〜 max）")
+            for col, (mn, mx) in numeric_stats.items():
                 lines.append(f"- {col}: {mn} 〜 {mx}")
+
+        if categorical_values:
+            lines.append("\n### カテゴリカラムのユニーク値（上位10件）")
+            for col, vals in categorical_values.items():
+                lines.append(f"- {col}: {', '.join(vals)}")
 
         return "\n".join(lines)
 

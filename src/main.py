@@ -17,6 +17,7 @@ from src.orchestrator.hypothesis_generator import Hypothesis, HypothesisGenerato
 from src.orchestrator.report_generator import ReportGenerator
 from src.orchestrator.request_parser import ParsedRequest, RequestParser
 from src.storage.duckdb_client import DuckDBClient
+from src.storage.sql_validator import SQLValidationError, validate_and_sanitize
 
 
 # ------------------------------------------------------------------
@@ -51,15 +52,27 @@ def format_query_result(rows: list[dict[str, Any]], max_rows: int = 10) -> str:
 
 
 def run_hypotheses(db: DuckDBClient, hypotheses: list[Hypothesis]) -> None:
+    allowed_tables = db.list_tables()
     for h in hypotheses:
         if not h.sql:
             h.result = "（SQL なし）"
+            h.status = "no_sql"
             continue
         try:
-            rows = db.query(h.sql)
-            h.result = format_query_result(rows)
+            safe_sql = validate_and_sanitize(h.sql, allowed_tables)
+            rows = db.query(safe_sql)
+            if rows:
+                h.result = format_query_result(rows)
+                h.status = "supported"
+            else:
+                h.result = "（該当データなし）"
+                h.status = "no_data"
+        except SQLValidationError as e:
+            h.result = f"SQL バリデーションエラー: {e}"
+            h.status = "error"
         except Exception as e:
             h.result = f"SQL 実行エラー: {e}"
+            h.status = "error"
 
 
 # ------------------------------------------------------------------

@@ -19,6 +19,7 @@ from src.orchestrator.hypothesis_generator import Hypothesis, HypothesisGenerato
 from src.orchestrator.report_generator import ReportGenerator
 from src.orchestrator.request_parser import ParsedRequest, RequestParser
 from src.storage.duckdb_client import DuckDBClient
+from src.storage.sql_validator import SQLValidationError, validate_and_sanitize
 
 load_dotenv()
 
@@ -113,16 +114,28 @@ def _run_analysis(
                 llm, system_prompt, hypothesis_prompt
             ).generate(parsed, context)
 
+            allowed_tables = db.list_tables()
             for h in hypotheses:
                 emit({"step": 3, "status": "running", "message": f"仮説 {h.index} を検証中: {h.title[:40]}..."})
-                if h.sql:
-                    try:
-                        rows = db.query(h.sql)
-                        h.result = _fmt_result(rows)
-                    except Exception as e:
-                        h.result = f"SQL 実行エラー: {e}"
-                else:
+                if not h.sql:
                     h.result = "（SQL なし）"
+                    h.status = "no_sql"
+                    continue
+                try:
+                    safe_sql = validate_and_sanitize(h.sql, allowed_tables)
+                    rows = db.query(safe_sql)
+                    if rows:
+                        h.result = _fmt_result(rows)
+                        h.status = "supported"
+                    else:
+                        h.result = "（該当データなし）"
+                        h.status = "no_data"
+                except SQLValidationError as e:
+                    h.result = f"SQL バリデーションエラー: {e}"
+                    h.status = "error"
+                except Exception as e:
+                    h.result = f"SQL 実行エラー: {e}"
+                    h.status = "error"
 
             emit({"step": 3, "status": "done", "message": f"{len(hypotheses)} つの仮説を検証完了"})
 

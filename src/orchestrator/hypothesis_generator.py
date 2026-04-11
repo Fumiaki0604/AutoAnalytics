@@ -7,13 +7,22 @@ from src.llm.llm_client import LLMClient, LLMMessage
 from src.orchestrator.request_parser import ParsedRequest
 
 
+# SQL 実行後に設定されるステータス
+# supported  : 結果が得られ、仮説を支持するデータがある
+# no_data    : SQL は成功したが結果が 0 行だった
+# error      : SQL 実行エラー（バリデーション含む）
+# no_sql     : SQL が生成されなかった
+HypothesisStatus = str
+
+
 @dataclass
 class Hypothesis:
     index: int
     title: str
     description: str
     sql: str
-    result: str = ""   # SQL 実行後に埋める
+    result: str = ""
+    status: HypothesisStatus = "pending"
 
 
 class HypothesisGenerator:
