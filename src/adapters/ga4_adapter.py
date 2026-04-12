@@ -1,6 +1,7 @@
 """GA4 Data API からデータを取得して DuckDB テーブルに格納する Adapter。"""
 
 from dataclasses import dataclass
+from typing import Optional
 
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
@@ -66,8 +67,8 @@ class GA4Adapter:
         start_date: str,
         end_date: str,
         table_name: str = "ga4_data",
-        dimensions: list[str] | None = None,
-        metrics: list[str] | None = None,
+        dimensions: Optional[list[str]] = None,
+        metrics: Optional[list[str]] = None,
     ) -> GA4LoadResult:
         """GA4 からデータを取得して DuckDB テーブルを作成する。
 

@@ -59,3 +59,31 @@ def get_session(session_id: Optional[str]) -> Optional[dict]:
 
 def delete_session(session_id: str) -> None:
     _get_client().table("sessions").delete().eq("id", session_id).execute()
+
+
+# ------------------------------------------------------------------
+# OAuth state store（Render のマルチインスタンス対策）
+# ------------------------------------------------------------------
+
+def save_state(state: str, ttl_minutes: int = 10) -> None:
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
+    _get_client().table("sessions").insert({
+        "id": f"state:{state}",
+        "expires_at": expires_at.isoformat(),
+    }).execute()
+
+
+def verify_and_consume_state(state: str) -> bool:
+    """state が存在して有効期限内なら True を返し、レコードを削除する。"""
+    res = (
+        _get_client()
+        .table("sessions")
+        .select("id")
+        .eq("id", f"state:{state}")
+        .gt("expires_at", datetime.now(timezone.utc).isoformat())
+        .execute()
+    )
+    if not res.data:
+        return False
+    _get_client().table("sessions").delete().eq("id", f"state:{state}").execute()
+    return True

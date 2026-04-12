@@ -17,10 +17,14 @@ from src.adapters.csv_adapter import CSVAdapter
 from src.adapters.ga4_adapter import GA4Adapter
 from src.auth.google_oauth import (
     build_auth_url,
+    exchange_code,
+)
+from src.auth.session_store import (
     create_session,
     delete_session,
-    exchange_code,
     get_session,
+    save_state,
+    verify_and_consume_state,
 )
 from src.llm.anthropic_client import AnthropicClient
 from src.orchestrator.hypothesis_generator import Hypothesis, HypothesisGenerator
@@ -217,9 +221,8 @@ async def analyze(
 @app.get("/auth/login")
 async def auth_login() -> RedirectResponse:
     url, state = build_auth_url()
-    response = RedirectResponse(url)
-    response.set_cookie("oauth_state", state, httponly=True, max_age=600)
-    return response
+    save_state(state)  # Supabase に保存（マルチインスタンス対応）
+    return RedirectResponse(url)
 
 
 @app.get("/auth/callback")
@@ -227,9 +230,8 @@ async def auth_callback(
     code: str,
     state: str,
     request: Request,
-    oauth_state: str = Cookie(default=""),
 ) -> RedirectResponse:
-    if state != oauth_state:
+    if not verify_and_consume_state(state):
         raise HTTPException(status_code=400, detail="Invalid state")
     user_data = await exchange_code(code)
     session_id = create_session(user_data)
