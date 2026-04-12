@@ -11,3 +11,4 @@ google-analytics-data>=0.18.0
 google-auth>=2.37.0
 google-auth-oauthlib>=1.2.0
 httpx>=0.27.0
+supabase>=2.9.0

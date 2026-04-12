@@ -11,6 +11,12 @@ from urllib.parse import urlencode
 
 import httpx
 
+from src.auth.session_store import (
+    create_session,
+    delete_session,
+    get_session,
+)
+
 GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
 GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 
@@ -24,9 +30,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/analytics.readonly",
 ]
-
-# session_id → {access_token, email, name} の in-memory ストア
-_sessions: dict[str, dict] = {}
 
 
 def get_redirect_uri() -> str:
@@ -81,17 +84,5 @@ async def exchange_code(code: str) -> dict:
     }
 
 
-def create_session(user_data: dict) -> str:
-    session_id = secrets.token_urlsafe(32)
-    _sessions[session_id] = user_data
-    return session_id
-
-
-def get_session(session_id: Optional[str]) -> Optional[dict]:
-    if not session_id:
-        return None
-    return _sessions.get(session_id)
-
-
-def delete_session(session_id: str) -> None:
-    _sessions.pop(session_id, None)
+# create_session / get_session / delete_session は session_store から re-export
+__all__ = ["build_auth_url", "exchange_code", "create_session", "get_session", "delete_session"]
