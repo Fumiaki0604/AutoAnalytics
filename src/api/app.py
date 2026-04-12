@@ -9,11 +9,19 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import Cookie, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.adapters.csv_adapter import CSVAdapter
+from src.adapters.ga4_adapter import GA4Adapter
+from src.auth.google_oauth import (
+    build_auth_url,
+    create_session,
+    delete_session,
+    exchange_code,
+    get_session,
+)
 from src.llm.anthropic_client import AnthropicClient
 from src.orchestrator.hypothesis_generator import Hypothesis, HypothesisGenerator
 from src.orchestrator.report_generator import ReportGenerator
@@ -194,6 +202,173 @@ async def analyze(
             yield f"data: {json.dumps({'type': 'error', 'message': 'タイムアウト（180秒）'}, ensure_ascii=False)}\n\n"
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ------------------------------------------------------------------
+# Auth routes
+# ------------------------------------------------------------------
+
+@app.get("/auth/login")
+async def auth_login() -> RedirectResponse:
+    url, state = build_auth_url()
+    response = RedirectResponse(url)
+    response.set_cookie("oauth_state", state, httponly=True, max_age=600)
+    return response
+
+
+@app.get("/auth/callback")
+async def auth_callback(
+    code: str,
+    state: str,
+    request: Request,
+    oauth_state: str = Cookie(default=""),
+) -> RedirectResponse:
+    if state != oauth_state:
+        raise HTTPException(status_code=400, detail="Invalid state")
+    user_data = await exchange_code(code)
+    session_id = create_session(user_data)
+    response = RedirectResponse("/")
+    response.set_cookie("session_id", session_id, httponly=True, max_age=3600 * 8)
+    return response
+
+
+@app.get("/auth/me")
+async def auth_me(session_id: str = Cookie(default="")) -> JSONResponse:
+    session = get_session(session_id)
+    if not session:
+        return JSONResponse({"authenticated": False})
+    return JSONResponse({
+        "authenticated": True,
+        "email": session.get("email"),
+        "name": session.get("name"),
+        "picture": session.get("picture"),
+    })
+
+
+@app.post("/auth/logout")
+async def auth_logout(session_id: str = Cookie(default="")) -> JSONResponse:
+    delete_session(session_id)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("session_id")
+    return response
+
+
+# ------------------------------------------------------------------
+# GA4 analyze route
+# ------------------------------------------------------------------
+
+def _run_ga4_analysis(
+    property_id: str,
+    start_date: str,
+    end_date: str,
+    request_text: str,
+    access_token: str,
+    queue: asyncio.Queue,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    def emit(event: dict) -> None:
+        asyncio.run_coroutine_threadsafe(queue.put(event), loop)
+
+    db_path = str(DATA_DIR / f"session_{uuid.uuid4().hex}.duckdb")
+
+    try:
+        system_prompt = _load_prompt("system_prompt.md")
+        hypothesis_prompt = _load_prompt("hypothesis_prompt.md")
+        report_prompt = _load_prompt("report_prompt.md")
+        llm = AnthropicClient()
+
+        with DuckDBClient(db_path) as db:
+
+            # Step 1: GA4 データ取得
+            emit({"step": 1, "status": "running", "message": "GA4 からデータを取得中..."})
+            meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
+            emit({"step": 1, "status": "done", "message": meta.summary()})
+
+            # Step 2〜4 は CSV フローと共通
+            emit({"step": 2, "status": "running", "message": "分析依頼を解析中..."})
+            parsed: ParsedRequest = RequestParser(llm, system_prompt).parse(
+                request_text, db.list_tables()
+            )
+            emit({
+                "step": 2, "status": "done", "message": parsed.summary,
+                "detail": {"kpi": parsed.kpi, "period": parsed.period, "dimensions": parsed.dimensions},
+            })
+
+            emit({"step": 3, "status": "running", "message": "仮説を生成中..."})
+            context = _data_context(db, parsed.target_table)
+            hypotheses: list[Hypothesis] = HypothesisGenerator(
+                llm, system_prompt, hypothesis_prompt
+            ).generate(parsed, context)
+
+            allowed_tables = db.list_tables()
+            for h in hypotheses:
+                emit({"step": 3, "status": "running", "message": f"仮説 {h.index} を検証中: {h.title[:40]}..."})
+                if not h.sql:
+                    h.result, h.status = "（SQL なし）", "no_sql"
+                    continue
+                try:
+                    rows = db.query(validate_and_sanitize(h.sql, allowed_tables))
+                    h.result = _fmt_result(rows) if rows else "（該当データなし）"
+                    h.status = "supported" if rows else "no_data"
+                except SQLValidationError as e:
+                    h.result, h.status = f"SQL バリデーションエラー: {e}", "error"
+                except Exception as e:
+                    h.result, h.status = f"SQL 実行エラー: {e}", "error"
+
+            emit({"step": 3, "status": "done", "message": f"{len(hypotheses)} つの仮説を検証完了"})
+
+            emit({"step": 4, "status": "running", "message": "レポートを生成中..."})
+            rep_gen = ReportGenerator(llm, system_prompt, report_prompt)
+            report = rep_gen.generate(parsed, hypotheses)
+            output_path = rep_gen.save(report, str(REPORTS_DIR))
+            emit({"step": 4, "status": "done", "message": "レポート生成完了"})
+            emit({"type": "report", "content": report, "filename": output_path.name})
+
+    except Exception as e:
+        emit({"type": "error", "message": str(e)})
+    finally:
+        emit({"type": "end"})
+        Path(db_path).unlink(missing_ok=True)
+
+
+@app.post("/api/analyze/ga4")
+async def analyze_ga4(
+    property_id: str = Form(...),
+    start_date: str = Form(...),
+    end_date: str = Form(...),
+    request_text: str = Form(...),
+    session_id: str = Cookie(default=""),
+) -> StreamingResponse:
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="ログインが必要です")
+
+    access_token = session.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=401, detail="アクセストークンがありません")
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    loop.run_in_executor(
+        _executor, _run_ga4_analysis,
+        property_id, start_date, end_date, request_text, access_token, queue, loop,
+    )
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            while True:
+                event = await asyncio.wait_for(queue.get(), timeout=180.0)
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                if event.get("type") in ("end", "error"):
+                    break
+        except asyncio.TimeoutError:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'タイムアウト'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_stream(),

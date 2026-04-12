@@ -9,206 +9,112 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --bg: #f0f2f5;
-      --surface: #ffffff;
-      --border: #e2e8f0;
-      --text: #1e293b;
-      --muted: #64748b;
-      --accent: #4f46e5;
-      --accent-hover: #4338ca;
-      --success: #10b981;
-      --warning: #f59e0b;
-      --error: #ef4444;
-      --radius: 12px;
+      --bg: #f0f2f5; --surface: #ffffff; --border: #e2e8f0;
+      --text: #1e293b; --muted: #64748b; --accent: #4f46e5;
+      --accent-hover: #4338ca; --success: #10b981; --warning: #f59e0b;
+      --error: #ef4444; --radius: 12px;
       --shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
     }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-    }
+    /* Header */
+    header { background: #1e1b4b; padding: 0 32px; height: 56px; display: flex; align-items: center; gap: 12px; }
+    header .logo { font-size: 18px; font-weight: 700; color: #fff; letter-spacing: -.3px; flex: 1; }
+    header .badge { font-size: 11px; font-weight: 600; background: #4f46e5; color: #fff; padding: 2px 8px; border-radius: 99px; }
+    .user-info { display: flex; align-items: center; gap: 10px; color: #fff; font-size: 13px; }
+    .user-info img { width: 28px; height: 28px; border-radius: 50%; }
+    .login-btn { background: #fff; color: #1e1b4b; border: none; border-radius: 6px; padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+    .logout-btn { background: transparent; color: #94a3b8; border: 1px solid #3730a3; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+    .logout-btn:hover { color: #fff; border-color: #fff; }
 
-    /* ── Header ── */
-    header {
-      background: #1e1b4b;
-      padding: 0 32px;
-      height: 56px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    header .logo { font-size: 18px; font-weight: 700; color: #fff; letter-spacing: -.3px; }
-    header .badge {
-      font-size: 11px; font-weight: 600; background: #4f46e5;
-      color: #fff; padding: 2px 8px; border-radius: 99px; letter-spacing: .5px;
-    }
+    /* Layout */
+    .layout { display: grid; grid-template-columns: 380px 1fr; gap: 24px; max-width: 1200px; margin: 0 auto; padding: 28px 24px; }
+    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
 
-    /* ── Layout ── */
-    .layout {
-      display: grid;
-      grid-template-columns: 380px 1fr;
-      gap: 24px;
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 28px 24px;
-    }
-    @media (max-width: 800px) {
-      .layout { grid-template-columns: 1fr; }
-    }
+    /* Card */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 24px; }
+    .card-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 16px; }
 
-    /* ── Card ── */
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: 24px;
-    }
-    .card-title {
-      font-size: 13px; font-weight: 600; color: var(--muted);
-      text-transform: uppercase; letter-spacing: .6px; margin-bottom: 16px;
-    }
+    /* Tabs */
+    .tabs { display: flex; gap: 4px; background: var(--bg); border-radius: 8px; padding: 4px; margin-bottom: 20px; }
+    .tab { flex: 1; text-align: center; padding: 7px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--muted); border: none; background: transparent; transition: all .15s; }
+    .tab.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
 
-    /* ── File drop ── */
-    .drop-zone {
-      border: 2px dashed var(--border);
-      border-radius: 8px;
-      padding: 32px 16px;
-      text-align: center;
-      cursor: pointer;
-      transition: border-color .2s, background .2s;
-      position: relative;
-    }
-    .drop-zone:hover, .drop-zone.drag-over {
-      border-color: var(--accent);
-      background: #eef2ff;
-    }
-    .drop-zone input[type="file"] {
-      position: absolute; inset: 0; opacity: 0; cursor: pointer;
-    }
+    /* GA4 notice */
+    .ga4-notice { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #3730a3; margin-bottom: 16px; }
+    .ga4-notice a { color: var(--accent); font-weight: 600; }
+
+    /* File drop */
+    .drop-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 32px 16px; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; position: relative; }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: #eef2ff; }
+    .drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .drop-icon { font-size: 32px; margin-bottom: 8px; }
     .drop-hint { font-size: 13px; color: var(--muted); }
     .drop-hint strong { color: var(--accent); }
-    .file-name {
-      margin-top: 10px; font-size: 13px; font-weight: 600;
-      color: var(--success); display: none;
-    }
+    .file-name { margin-top: 10px; font-size: 13px; font-weight: 600; color: var(--success); display: none; }
 
-    /* ── Textarea ── */
-    label { font-size: 13px; font-weight: 600; color: var(--text); display: block; margin: 20px 0 6px; }
-    textarea {
+    /* Form */
+    label { font-size: 13px; font-weight: 600; color: var(--text); display: block; margin: 16px 0 5px; }
+    input[type="text"], input[type="date"], textarea {
       width: 100%; border: 1px solid var(--border); border-radius: 8px;
-      padding: 10px 12px; font-size: 14px; font-family: inherit;
-      resize: vertical; min-height: 110px; color: var(--text);
-      transition: border-color .2s;
-      outline: none;
+      padding: 9px 12px; font-size: 14px; font-family: inherit; color: var(--text);
+      transition: border-color .2s; outline: none; background: var(--surface);
     }
-    textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+    input[type="text"]:focus, input[type="date"]:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+    textarea { resize: vertical; min-height: 100px; }
+    .date-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-    /* ── Button ── */
-    button.run-btn {
-      margin-top: 16px; width: 100%;
-      background: var(--accent); color: #fff;
-      border: none; border-radius: 8px;
-      padding: 12px; font-size: 14px; font-weight: 600;
-      cursor: pointer; transition: background .2s, opacity .2s;
-      display: flex; align-items: center; justify-content: center; gap: 8px;
-    }
+    /* Button */
+    button.run-btn { margin-top: 16px; width: 100%; background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 12px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background .2s, opacity .2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
     button.run-btn:hover:not(:disabled) { background: var(--accent-hover); }
     button.run-btn:disabled { opacity: .6; cursor: not-allowed; }
 
-    /* ── Progress steps ── */
+    /* Steps */
     .steps { display: flex; flex-direction: column; gap: 10px; }
-    .step {
-      display: flex; align-items: flex-start; gap: 12px;
-      padding: 12px 14px; border-radius: 8px;
-      background: var(--bg); opacity: .35;
-      transition: opacity .3s;
-    }
+    .step { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 8px; background: var(--bg); opacity: .35; transition: opacity .3s; }
     .step.active { opacity: 1; }
-    .step-icon {
-      width: 28px; height: 28px; border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 13px; flex-shrink: 0;
-      background: #e2e8f0; color: var(--muted);
-    }
+    .step-icon { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; background: #e2e8f0; color: var(--muted); }
     .step.running .step-icon { background: #fef3c7; color: var(--warning); animation: pulse 1.4s infinite; }
     .step.done    .step-icon { background: #d1fae5; color: var(--success); }
     .step.error   .step-icon { background: #fee2e2; color: var(--error); }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
-
     .step-body { flex: 1; min-width: 0; }
     .step-label { font-size: 13px; font-weight: 600; }
-    .step-msg   { font-size: 12px; color: var(--muted); margin-top: 2px; word-break: break-word; }
+    .step-msg { font-size: 12px; color: var(--muted); margin-top: 2px; word-break: break-word; }
 
-    /* ── Parsed info ── */
-    .parsed-info {
-      display: none;
-      margin-top: 16px;
-      padding: 12px 14px;
-      background: #eef2ff;
-      border-radius: 8px;
-      font-size: 12px;
-      color: #3730a3;
-    }
+    /* Parsed info */
+    .parsed-info { display: none; margin-top: 16px; padding: 12px 14px; background: #eef2ff; border-radius: 8px; font-size: 12px; color: #3730a3; flex-direction: column; }
     .parsed-info .pi-row { display: flex; gap: 6px; margin-bottom: 4px; }
     .parsed-info .pi-label { font-weight: 700; min-width: 52px; }
 
-    /* ── Report area ── */
+    /* Report */
     .report-wrap { display: none; }
-    .report-actions {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 16px;
-    }
+    .report-actions { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
     .report-actions .title { font-size: 15px; font-weight: 700; }
-    .dl-btn {
-      background: #f1f5f9; border: 1px solid var(--border);
-      border-radius: 6px; padding: 6px 14px;
-      font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text);
-      text-decoration: none; transition: background .2s;
-    }
+    .dl-btn { background: #f1f5f9; border: 1px solid var(--border); border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text); text-decoration: none; transition: background .2s; }
     .dl-btn:hover { background: #e2e8f0; }
 
-    /* ── Markdown ── */
-    .markdown {
-      font-size: 14px; line-height: 1.75; color: var(--text);
-    }
+    /* Markdown */
+    .markdown { font-size: 14px; line-height: 1.75; color: var(--text); }
     .markdown h1 { font-size: 22px; margin: 0 0 16px; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
     .markdown h2 { font-size: 17px; margin: 28px 0 10px; color: #1e1b4b; }
     .markdown h3 { font-size: 14px; margin: 20px 0 8px; }
     .markdown p  { margin-bottom: 10px; }
     .markdown ul, .markdown ol { padding-left: 20px; margin-bottom: 10px; }
     .markdown li { margin-bottom: 4px; }
-    .markdown blockquote {
-      border-left: 3px solid var(--accent); padding: 8px 16px;
-      background: #eef2ff; border-radius: 0 6px 6px 0; margin: 12px 0;
-      color: #3730a3;
-    }
-    .markdown pre {
-      background: #f8fafc; border: 1px solid var(--border);
-      border-radius: 8px; padding: 14px; overflow-x: auto; margin: 12px 0;
-    }
-    .markdown code:not(pre code) {
-      background: #f1f5f9; padding: 1px 6px; border-radius: 4px;
-      font-size: 12px; color: #be185d;
-    }
-    .markdown table {
-      width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px;
-    }
+    .markdown blockquote { border-left: 3px solid var(--accent); padding: 8px 16px; background: #eef2ff; border-radius: 0 6px 6px 0; margin: 12px 0; color: #3730a3; }
+    .markdown pre { background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 14px; overflow-x: auto; margin: 12px 0; }
+    .markdown code:not(pre code) { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 12px; color: #be185d; }
+    .markdown table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
     .markdown th { background: #f1f5f9; font-weight: 700; }
     .markdown th, .markdown td { border: 1px solid var(--border); padding: 7px 12px; }
     .markdown tr:nth-child(even) td { background: #f8fafc; }
 
-    /* ── Empty state ── */
-    .empty-state {
-      display: flex; flex-direction: column; align-items: center;
-      justify-content: center; min-height: 300px;
-      color: var(--muted); text-align: center; gap: 10px;
-    }
+    /* Empty state */
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; color: var(--muted); text-align: center; gap: 10px; }
     .empty-state .icon { font-size: 48px; opacity: .3; }
     .empty-state p { font-size: 14px; }
   </style>
@@ -218,29 +124,55 @@
 <header>
   <span class="logo">AutoAnalytics</span>
   <span class="badge">PoC</span>
+  <div id="headerAuth"><!-- JS で描画 --></div>
 </header>
 
 <div class="layout">
-
-  <!-- ── Left: Form ── -->
+  <!-- Left: Form -->
   <div>
     <div class="card">
       <div class="card-title">データと依頼</div>
 
-      <!-- File drop -->
-      <div class="drop-zone" id="dropZone">
-        <input type="file" id="csvInput" accept=".csv" />
-        <div class="drop-icon">📂</div>
-        <div class="drop-hint">CSV をドラッグ＆ドロップ<br>または <strong>クリックして選択</strong></div>
-        <div class="file-name" id="fileName"></div>
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('csv')">CSV</button>
+        <button class="tab" onclick="switchTab('ga4')">GA4</button>
+      </div>
+
+      <!-- CSV panel -->
+      <div class="tab-panel active" id="panel-csv">
+        <div class="drop-zone" id="dropZone">
+          <input type="file" id="csvInput" accept=".csv" />
+          <div class="drop-icon">📂</div>
+          <div class="drop-hint">CSV をドラッグ＆ドロップ<br>または <strong>クリックして選択</strong></div>
+          <div class="file-name" id="fileName"></div>
+        </div>
+      </div>
+
+      <!-- GA4 panel -->
+      <div class="tab-panel" id="panel-ga4">
+        <div class="ga4-notice" id="ga4Notice">
+          GA4 分析には Google ログインが必要です。
+          <a href="/auth/login">ログイン</a>
+        </div>
+        <div id="ga4Form">
+          <label>GA4 プロパティ ID</label>
+          <input type="text" id="propertyId" placeholder="例: 123456789" />
+          <label>期間</label>
+          <div class="date-row">
+            <div>
+              <input type="date" id="startDate" />
+            </div>
+            <div>
+              <input type="date" id="endDate" />
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Request -->
       <label for="requestText">分析依頼</label>
-      <textarea
-        id="requestText"
-        placeholder="例: CVRが先月比で低下している。チャネル別・デバイス別に原因を探りたい"
-      ></textarea>
+      <textarea id="requestText" placeholder="例: CVRが先月比で低下している。チャネル別・デバイス別に原因を探りたい"></textarea>
 
       <button class="run-btn" id="runBtn" onclick="startAnalysis()">
         <span id="btnIcon">▶</span>
@@ -249,40 +181,14 @@
     </div>
 
     <!-- Progress -->
-    <div class="card" style="margin-top:16px;" id="progressCard" style="display:none">
+    <div class="card" style="margin-top:16px; display:none" id="progressCard">
       <div class="card-title">進捗</div>
       <div class="steps">
-        <div class="step" id="step1">
-          <div class="step-icon">1</div>
-          <div class="step-body">
-            <div class="step-label">CSV 読み込み</div>
-            <div class="step-msg" id="step1msg">待機中</div>
-          </div>
-        </div>
-        <div class="step" id="step2">
-          <div class="step-icon">2</div>
-          <div class="step-body">
-            <div class="step-label">依頼の解析</div>
-            <div class="step-msg" id="step2msg">待機中</div>
-          </div>
-        </div>
-        <div class="step" id="step3">
-          <div class="step-icon">3</div>
-          <div class="step-body">
-            <div class="step-label">仮説生成 & 検証</div>
-            <div class="step-msg" id="step3msg">待機中</div>
-          </div>
-        </div>
-        <div class="step" id="step4">
-          <div class="step-icon">4</div>
-          <div class="step-body">
-            <div class="step-label">レポート生成</div>
-            <div class="step-msg" id="step4msg">待機中</div>
-          </div>
-        </div>
+        <div class="step" id="step1"><div class="step-icon">1</div><div class="step-body"><div class="step-label">データ読み込み</div><div class="step-msg" id="step1msg">待機中</div></div></div>
+        <div class="step" id="step2"><div class="step-icon">2</div><div class="step-body"><div class="step-label">依頼の解析</div><div class="step-msg" id="step2msg">待機中</div></div></div>
+        <div class="step" id="step3"><div class="step-icon">3</div><div class="step-body"><div class="step-label">仮説生成 & 検証</div><div class="step-msg" id="step3msg">待機中</div></div></div>
+        <div class="step" id="step4"><div class="step-icon">4</div><div class="step-body"><div class="step-label">レポート生成</div><div class="step-msg" id="step4msg">待機中</div></div></div>
       </div>
-
-      <!-- Parsed info -->
       <div class="parsed-info" id="parsedInfo">
         <div class="pi-row"><span class="pi-label">KPI</span><span id="piKpi">—</span></div>
         <div class="pi-row"><span class="pi-label">期間</span><span id="piPeriod">—</span></div>
@@ -291,13 +197,12 @@
     </div>
   </div>
 
-  <!-- ── Right: Report ── -->
+  <!-- Right: Report -->
   <div class="card">
     <div class="empty-state" id="emptyState">
       <div class="icon">📊</div>
-      <p>CSV をアップロードして分析依頼を入力すると<br>ここにレポートが表示されます</p>
+      <p>データをアップロードして分析依頼を入力すると<br>ここにレポートが表示されます</p>
     </div>
-
     <div class="report-wrap" id="reportWrap">
       <div class="report-actions">
         <span class="title">分析レポート</span>
@@ -306,101 +211,169 @@
       <div class="markdown" id="reportContent"></div>
     </div>
   </div>
-
 </div>
 
 <script>
-  // ── File drop handling ──
+  // ── State ──
+  let currentTab = 'csv';
+  let currentUser = null;
+
+  // ── Auth ──
+  async function loadUser() {
+    const res = await fetch('/auth/me');
+    const data = await res.json();
+    currentUser = data.authenticated ? data : null;
+    renderHeader();
+    updateGA4Notice();
+  }
+
+  function renderHeader() {
+    const el = document.getElementById('headerAuth');
+    if (currentUser) {
+      el.innerHTML = `
+        <div class="user-info">
+          ${currentUser.picture ? `<img src="${currentUser.picture}" alt="">` : ''}
+          <span>${currentUser.name || currentUser.email}</span>
+          <button class="logout-btn" onclick="logout()">ログアウト</button>
+        </div>`;
+    } else {
+      el.innerHTML = `<button class="login-btn" onclick="location.href='/auth/login'">🔑 Googleでログイン</button>`;
+    }
+  }
+
+  async function logout() {
+    await fetch('/auth/logout', { method: 'POST' });
+    currentUser = null;
+    renderHeader();
+    updateGA4Notice();
+  }
+
+  function updateGA4Notice() {
+    const notice = document.getElementById('ga4Notice');
+    if (currentUser) {
+      notice.innerHTML = `✅ <strong>${currentUser.email}</strong> でログイン中`;
+      notice.style.background = '#d1fae5';
+      notice.style.borderColor = '#6ee7b7';
+      notice.style.color = '#065f46';
+    } else {
+      notice.innerHTML = `GA4 分析には Google ログインが必要です。<a href="/auth/login">ログイン</a>`;
+      notice.style.background = '#eef2ff';
+      notice.style.borderColor = '#c7d2fe';
+      notice.style.color = '#3730a3';
+    }
+  }
+
+  // ── Tabs ──
+  function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      t.classList.toggle('active', (i === 0 && tab === 'csv') || (i === 1 && tab === 'ga4'));
+    });
+    document.getElementById('panel-csv').classList.toggle('active', tab === 'csv');
+    document.getElementById('panel-ga4').classList.toggle('active', tab === 'ga4');
+  }
+
+  // ── File drop ──
   const dropZone = document.getElementById('dropZone');
   const csvInput = document.getElementById('csvInput');
-  const fileName = document.getElementById('fileName');
 
   csvInput.addEventListener('change', () => showFile(csvInput.files[0]));
-
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
   dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file) { csvInput.files = e.dataTransfer.files; showFile(file); }
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) { csvInput.files = e.dataTransfer.files; showFile(e.dataTransfer.files[0]); }
   });
 
   function showFile(file) {
     if (!file) return;
-    fileName.textContent = `✓ ${file.name}`;
-    fileName.style.display = 'block';
+    const el = document.getElementById('fileName');
+    el.textContent = `✓ ${file.name}`;
+    el.style.display = 'block';
   }
 
-  // ── Step helpers ──
+  // ── Steps ──
   const ICONS = { idle: '○', running: '⟳', done: '✓', error: '✗' };
-
   function setStep(n, status, msg) {
-    const el   = document.getElementById(`step${n}`);
-    const icon = el.querySelector('.step-icon');
-    const msgEl = document.getElementById(`step${n}msg`);
+    const el = document.getElementById(`step${n}`);
     el.className = `step active ${status}`;
-    icon.textContent = ICONS[status] ?? n;
-    if (msg) msgEl.textContent = msg;
+    el.querySelector('.step-icon').textContent = ICONS[status] ?? n;
+    if (msg) document.getElementById(`step${n}msg`).textContent = msg;
   }
 
-  // ── Main analysis ──
+  // ── Analysis ──
   async function startAnalysis() {
-    const file    = csvInput.files[0];
     const request = document.getElementById('requestText').value.trim();
-
-    if (!file)    { alert('CSV ファイルを選択してください'); return; }
     if (!request) { alert('分析依頼を入力してください'); return; }
 
+    let fetchPromise;
+
+    if (currentTab === 'csv') {
+      const file = csvInput.files[0];
+      if (!file) { alert('CSV ファイルを選択してください'); return; }
+      const formData = new FormData();
+      formData.append('csv_file', file);
+      formData.append('request_text', request);
+      fetchPromise = fetch('/api/analyze', { method: 'POST', body: formData });
+
+    } else {
+      if (!currentUser) { alert('GA4 分析には Google ログインが必要です'); return; }
+      const propertyId = document.getElementById('propertyId').value.trim();
+      const startDate  = document.getElementById('startDate').value;
+      const endDate    = document.getElementById('endDate').value;
+      if (!propertyId || !startDate || !endDate) { alert('プロパティID と期間を入力してください'); return; }
+      const formData = new FormData();
+      formData.append('property_id', propertyId);
+      formData.append('start_date', startDate);
+      formData.append('end_date', endDate);
+      formData.append('request_text', request);
+      fetchPromise = fetch('/api/analyze/ga4', { method: 'POST', body: formData });
+    }
+
     // Reset UI
-    document.getElementById('emptyState').style.display  = 'none';
-    document.getElementById('reportWrap').style.display  = 'none';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('reportWrap').style.display = 'none';
     document.getElementById('progressCard').style.display = '';
-    document.getElementById('parsedInfo').style.display  = 'none';
+    document.getElementById('parsedInfo').style.display = 'none';
     [1,2,3,4].forEach(n => setStep(n, 'idle', '待機中'));
 
     const btn = document.getElementById('runBtn');
     btn.disabled = true;
-    document.getElementById('btnIcon').textContent  = '⏳';
+    document.getElementById('btnIcon').textContent = '⏳';
     document.getElementById('btnLabel').textContent = '分析中...';
 
-    const formData = new FormData();
-    formData.append('csv_file', file);
-    formData.append('request_text', request);
-
     try {
-      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await fetchPromise;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
 
-      const reader  = res.body.getReader();
+      const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let   buffer  = '';
+      let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop(); // 未完了行を保持
-
+        buffer = lines.pop();
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
-          const event = JSON.parse(line.slice(6));
-          handleEvent(event);
+          handleEvent(JSON.parse(line.slice(6)));
         }
       }
     } catch (e) {
       alert(`エラー: ${e.message}`);
     } finally {
       btn.disabled = false;
-      document.getElementById('btnIcon').textContent  = '▶';
+      document.getElementById('btnIcon').textContent = '▶';
       document.getElementById('btnLabel').textContent = '分析を開始する';
     }
   }
 
   function handleEvent(ev) {
-    // Progress step
     if (ev.step) {
       setStep(ev.step, ev.status, ev.message);
       if (ev.detail) {
@@ -408,31 +381,28 @@
         document.getElementById('piPeriod').textContent = ev.detail.period || '—';
         document.getElementById('piDims').textContent   = (ev.detail.dimensions || []).join(', ') || '—';
         document.getElementById('parsedInfo').style.display = 'flex';
-        document.getElementById('parsedInfo').style.flexDirection = 'column';
       }
       return;
     }
-
-    // Report ready
     if (ev.type === 'report') {
-      marked.setOptions({ highlight: (code, lang) => {
-        const valid = hljs.getLanguage(lang);
-        return valid ? hljs.highlight(code, { language: lang }).value : hljs.highlightAuto(code).value;
-      }});
       document.getElementById('reportContent').innerHTML = marked.parse(ev.content);
       document.getElementById('dlBtn').href = `/api/reports/${ev.filename}`;
       document.getElementById('dlBtn').setAttribute('download', ev.filename);
       document.getElementById('reportWrap').style.display = 'block';
-
-      // Highlight code blocks
       document.querySelectorAll('#reportContent pre code').forEach(el => hljs.highlightElement(el));
       return;
     }
-
-    if (ev.type === 'error') {
-      alert(`分析エラー: ${ev.message}`);
-    }
+    if (ev.type === 'error') alert(`分析エラー: ${ev.message}`);
   }
+
+  // ── Init ──
+  loadUser();
+
+  // デフォルト日付（直近30日）
+  const today = new Date();
+  const d30 = new Date(today); d30.setDate(d30.getDate() - 30);
+  document.getElementById('endDate').value = today.toISOString().slice(0, 10);
+  document.getElementById('startDate').value = d30.toISOString().slice(0, 10);
 </script>
 </body>
 </html>
