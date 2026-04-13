@@ -1,5 +1,6 @@
 """仮説検証結果を受け取り、Markdown レポートを生成・保存する。"""
 
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -52,6 +53,34 @@ class ReportGenerator:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def extract_summary_and_actions(report_md: str) -> tuple[str, list[str]]:
+        """レポート Markdown からサマリと推奨アクション一覧を抽出する。"""
+        # エグゼクティブサマリ セクション
+        findings = ""
+        summary_match = re.search(
+            r"##\s*エグゼクティブサマリ[^\n]*\n(.*?)(?=\n##|\Z)",
+            report_md,
+            re.DOTALL,
+        )
+        if summary_match:
+            findings = summary_match.group(1).strip()[:500]
+
+        # 推奨アクション セクションの箇条書き
+        actions: list[str] = []
+        actions_match = re.search(
+            r"##\s*推奨アクション[^\n]*\n(.*?)(?=\n##|\Z)",
+            report_md,
+            re.DOTALL,
+        )
+        if actions_match:
+            for line in actions_match.group(1).splitlines():
+                line = re.sub(r"^[\s\-\d\.\*]+", "", line).strip()
+                if line:
+                    actions.append(line[:100])
+
+        return findings, actions[:5]
 
     def _format_results(self, hypotheses: list[Hypothesis]) -> str:
         sections = []

@@ -34,6 +34,7 @@ from src.orchestrator.hypothesis_generator import Hypothesis, HypothesisGenerato
 from src.orchestrator.report_generator import ReportGenerator
 from src.orchestrator.request_parser import ParsedRequest, RequestParser
 from src.storage.duckdb_client import DuckDBClient
+from src.storage.memory_store import format_past_context, get_recent_memories, save_memory
 from src.storage.sql_validator import SQLValidationError, validate_and_sanitize
 
 load_dotenv()
@@ -87,6 +88,7 @@ def _run_analysis(
     table_name: str,
     queue: asyncio.Queue,
     loop: asyncio.AbstractEventLoop,
+    email: str = "",
 ) -> None:
     def emit(event: dict) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
@@ -125,9 +127,12 @@ def _run_analysis(
             # Step 3: 仮説生成 & SQL 実行
             emit({"step": 3, "status": "running", "message": "仮説を生成中..."})
             context = _data_context(db, parsed.target_table)
+            past_context = format_past_context(
+                get_recent_memories(email, "csv") if email else []
+            )
             hypotheses: list[Hypothesis] = HypothesisGenerator(
                 llm, system_prompt, hypothesis_prompt
-            ).generate(parsed, context)
+            ).generate(parsed, context, past_context)
 
             allowed_tables = db.list_tables()
             for h in hypotheses:
@@ -159,6 +164,14 @@ def _run_analysis(
             rep_gen = ReportGenerator(llm, system_prompt, report_prompt)
             report = rep_gen.generate(parsed, hypotheses)
             output_path = rep_gen.save(report, str(REPORTS_DIR))
+
+            if email:
+                findings, actions = ReportGenerator.extract_summary_and_actions(report)
+                try:
+                    save_memory(email, "csv", parsed.kpi, parsed.summary, findings, actions)
+                except Exception:
+                    pass  # メモリ保存失敗は分析結果に影響させない
+
             emit({"step": 4, "status": "done", "message": "レポート生成完了"})
 
             emit({"type": "report", "content": report, "filename": output_path.name})
@@ -184,6 +197,7 @@ async def analyze(
     csv_file: UploadFile = File(...),
     request_text: str = Form(...),
     table_name: str = Form("main_data"),
+    session_id: str = Cookie(default=""),
 ) -> StreamingResponse:
     # CSV を一時ファイルに保存
     suffix = Path(csv_file.filename or "data.csv").suffix or ".csv"
@@ -191,11 +205,14 @@ async def analyze(
         tmp.write(await csv_file.read())
         tmp_path = tmp.name
 
+    session = get_session(session_id)
+    email = session.get("email", "") if session else ""
+
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
     loop.run_in_executor(
-        _executor, _run_analysis, tmp_path, request_text, table_name, queue, loop
+        _executor, _run_analysis, tmp_path, request_text, table_name, queue, loop, email
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -282,6 +299,7 @@ def _run_ga4_analysis(
     access_token: str,
     queue: asyncio.Queue,
     loop: asyncio.AbstractEventLoop,
+    email: str = "",
 ) -> None:
     def emit(event: dict) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
@@ -313,9 +331,12 @@ def _run_ga4_analysis(
 
             emit({"step": 3, "status": "running", "message": "仮説を生成中..."})
             context = _data_context(db, parsed.target_table)
+            past_context = format_past_context(
+                get_recent_memories(email, property_id) if email else []
+            )
             hypotheses: list[Hypothesis] = HypothesisGenerator(
                 llm, system_prompt, hypothesis_prompt
-            ).generate(parsed, context)
+            ).generate(parsed, context, past_context)
 
             allowed_tables = db.list_tables()
             for h in hypotheses:
@@ -338,6 +359,14 @@ def _run_ga4_analysis(
             rep_gen = ReportGenerator(llm, system_prompt, report_prompt)
             report = rep_gen.generate(parsed, hypotheses)
             output_path = rep_gen.save(report, str(REPORTS_DIR))
+
+            if email:
+                findings, actions = ReportGenerator.extract_summary_and_actions(report)
+                try:
+                    save_memory(email, property_id, parsed.kpi, parsed.summary, findings, actions)
+                except Exception:
+                    pass
+
             emit({"step": 4, "status": "done", "message": "レポート生成完了"})
             emit({"type": "report", "content": report, "filename": output_path.name})
 
@@ -392,9 +421,10 @@ async def analyze_ga4(
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
+    email = session.get("email", "")
     loop.run_in_executor(
         _executor, _run_ga4_analysis,
-        property_id, start_date, end_date, request_text, access_token, queue, loop,
+        property_id, start_date, end_date, request_text, access_token, queue, loop, email,
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:

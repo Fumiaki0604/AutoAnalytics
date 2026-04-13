@@ -41,13 +41,19 @@ class HypothesisGenerator:
         self.system_prompt = system_prompt
         self.template = hypothesis_prompt_template
 
-    def generate(self, parsed: ParsedRequest, data_context: str) -> list[Hypothesis]:
+    def generate(
+        self,
+        parsed: ParsedRequest,
+        data_context: str,
+        past_context: str = "（過去の分析履歴なし）",
+    ) -> list[Hypothesis]:
         prompt = self.template.format(
             summary=parsed.summary,
             kpi=parsed.kpi,
             dimensions=", ".join(parsed.dimensions) if parsed.dimensions else "指定なし",
             table=parsed.target_table,
             data_context=data_context,
+            past_context=past_context,
         )
 
         response = self.llm.complete(
