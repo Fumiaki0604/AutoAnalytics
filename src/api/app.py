@@ -197,13 +197,19 @@ async def analyze(
 
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
+            deadline = asyncio.get_running_loop().time() + 180.0
             while True:
-                event = await asyncio.wait_for(queue.get(), timeout=180.0)
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                if event.get("type") in ("end", "error"):
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'タイムアウト（180秒）'}, ensure_ascii=False)}\n\n"
                     break
-        except asyncio.TimeoutError:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'タイムアウト（180秒）'}, ensure_ascii=False)}\n\n"
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=min(15.0, remaining))
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    if event.get("type") in ("end", "error"):
+                        break
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
@@ -363,14 +369,19 @@ async def analyze_ga4(
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        try:
-            while True:
-                event = await asyncio.wait_for(queue.get(), timeout=180.0)
+        deadline = asyncio.get_running_loop().time() + 180.0
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'タイムアウト'}, ensure_ascii=False)}\n\n"
+                break
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=min(15.0, remaining))
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 if event.get("type") in ("end", "error"):
                     break
-        except asyncio.TimeoutError:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'タイムアウト'}, ensure_ascii=False)}\n\n"
+            except asyncio.TimeoutError:
+                yield ": heartbeat\n\n"
 
     return StreamingResponse(
         event_stream(),
