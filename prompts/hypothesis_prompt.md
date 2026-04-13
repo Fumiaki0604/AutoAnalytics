@@ -24,6 +24,9 @@
 3. **カラム名は「スキーマ」に記載されたものだけを使うこと。** 存在しないカラムを参照してはならない。
 4. **DuckDB 構文を使うこと。** `STRFTIME` ではなく `STRPTIME` / `DATE_TRUNC` / `date_part` を使う。
 5. SQL が長くなる場合は CTE（WITH 句）で読みやすく書くこと。
+6. **CTE 名に DuckDB 予約語を使ってはならない。** 以下の名称は使用禁止。代わりに `_data` や `_result` を末尾に付けた名称を使うこと。
+   - 禁止: `pivot`, `unpivot`, `rank`, `ranked`, `sample`, `filter`, `exclude`, `values`, `table`, `index`, `group`, `order`, `select`, `from`, `where`, `join`, `on`, `as`, `by`, `with`
+   - 例: `pivot` → `channel_pivot_data`、`ranked` → `ranked_pages`、`monthly_device` → `device_monthly_data`
 
 ---
 

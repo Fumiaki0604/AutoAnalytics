@@ -31,6 +31,7 @@ class ReportGenerator:
             summary=parsed.summary,
             kpi=parsed.kpi,
             results=results_text,
+            today=datetime.now().strftime("%Y年%m月%d日"),
         )
 
         response = self.llm.complete(
