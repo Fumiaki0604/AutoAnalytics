@@ -284,7 +284,10 @@
     sel.innerHTML = '<option value="">読み込み中...</option>';
     try {
       const res = await fetch('/api/ga4/properties');
-      if (!res.ok) throw new Error('取得失敗');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
       const props = await res.json();
       if (props.length === 0) {
         sel.innerHTML = '<option value="">アクセス可能なプロパティがありません</option>';
@@ -298,8 +301,8 @@
         sel.appendChild(opt);
       });
       sel.disabled = false;
-    } catch {
-      sel.innerHTML = '<option value="">取得に失敗しました</option>';
+    } catch (e) {
+      sel.innerHTML = `<option value="">取得に失敗: ${e.message}</option>`;
     }
   }
 
