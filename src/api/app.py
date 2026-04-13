@@ -13,6 +13,9 @@ from fastapi import Cookie, FastAPI, File, Form, HTTPException, Request, UploadF
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from google.analytics.admin import AnalyticsAdminServiceClient
+from google.oauth2.credentials import Credentials as GoogleCredentials
+
 from src.adapters.csv_adapter import CSVAdapter
 from src.adapters.ga4_adapter import GA4Adapter
 from src.auth.google_oauth import (
@@ -343,6 +346,32 @@ def _run_ga4_analysis(
     finally:
         emit({"type": "end"})
         Path(db_path).unlink(missing_ok=True)
+
+
+@app.get("/api/ga4/properties")
+async def list_ga4_properties(session_id: str = Cookie(default="")) -> list[dict]:
+    """ログインユーザーがアクセスできるGA4プロパティ一覧を返す。"""
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="ログインが必要です")
+    access_token = session.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=401, detail="アクセストークンがありません")
+    try:
+        creds = GoogleCredentials(token=access_token)
+        client = AnalyticsAdminServiceClient(credentials=creds)
+        properties = []
+        for summary in client.list_account_summaries():
+            for prop in summary.property_summaries:
+                prop_id = prop.property.split("/")[-1]
+                properties.append({
+                    "id": prop_id,
+                    "name": prop.display_name,
+                    "account": summary.display_name,
+                })
+        return properties
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/analyze/ga4")

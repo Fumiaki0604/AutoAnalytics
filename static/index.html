@@ -47,6 +47,17 @@
     .ga4-notice { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #3730a3; margin-bottom: 16px; }
     .ga4-notice a { color: var(--accent); font-weight: 600; }
 
+    /* Property select */
+    select { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; font-size: 14px; font-family: inherit; color: var(--text); background: var(--surface); outline: none; transition: border-color .2s; cursor: pointer; }
+    select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+    select:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* Follow-up buttons */
+    .followup-bar { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .followup-bar-title { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
+    .followup-btn { display: inline-block; margin: 4px 4px 4px 0; padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--accent); background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 6px; cursor: pointer; transition: background .15s; }
+    .followup-btn:hover { background: #e0e7ff; }
+
     /* File drop */
     .drop-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 32px 16px; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; position: relative; }
     .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: #eef2ff; }
@@ -156,8 +167,10 @@
           <a href="/auth/login">ログイン</a>
         </div>
         <div id="ga4Form">
-          <label>GA4 プロパティ ID</label>
-          <input type="text" id="propertyId" placeholder="例: 123456789" />
+          <label>GA4 プロパティ</label>
+          <select id="propertyId" disabled>
+            <option value="">ログインするとプロパティが表示されます</option>
+          </select>
           <label>期間</label>
           <div class="date-row">
             <div>
@@ -255,12 +268,45 @@
       notice.style.background = '#d1fae5';
       notice.style.borderColor = '#6ee7b7';
       notice.style.color = '#065f46';
+      loadGA4Properties();
     } else {
       notice.innerHTML = `GA4 分析には Google ログインが必要です。<a href="/auth/login">ログイン</a>`;
       notice.style.background = '#eef2ff';
       notice.style.borderColor = '#c7d2fe';
       notice.style.color = '#3730a3';
+      resetPropertySelect();
     }
+  }
+
+  async function loadGA4Properties() {
+    const sel = document.getElementById('propertyId');
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">読み込み中...</option>';
+    try {
+      const res = await fetch('/api/ga4/properties');
+      if (!res.ok) throw new Error('取得失敗');
+      const props = await res.json();
+      if (props.length === 0) {
+        sel.innerHTML = '<option value="">アクセス可能なプロパティがありません</option>';
+        return;
+      }
+      sel.innerHTML = '<option value="">プロパティを選択してください</option>';
+      props.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = `${p.name} (${p.id}) — ${p.account}`;
+        sel.appendChild(opt);
+      });
+      sel.disabled = false;
+    } catch {
+      sel.innerHTML = '<option value="">取得に失敗しました</option>';
+    }
+  }
+
+  function resetPropertySelect() {
+    const sel = document.getElementById('propertyId');
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">ログインするとプロパティが表示されます</option>';
   }
 
   // ── Tabs ──
@@ -321,7 +367,7 @@
       const propertyId = document.getElementById('propertyId').value.trim();
       const startDate  = document.getElementById('startDate').value;
       const endDate    = document.getElementById('endDate').value;
-      if (!propertyId || !startDate || !endDate) { alert('プロパティID と期間を入力してください'); return; }
+      if (!propertyId || !startDate || !endDate) { alert('プロパティと期間を選択してください'); return; }
       const formData = new FormData();
       formData.append('property_id', propertyId);
       formData.append('start_date', startDate);
@@ -390,9 +436,44 @@
       document.getElementById('dlBtn').setAttribute('download', ev.filename);
       document.getElementById('reportWrap').style.display = 'block';
       document.querySelectorAll('#reportContent pre code').forEach(el => hljs.highlightElement(el));
+      injectFollowUpButtons(ev.content);
       return;
     }
     if (ev.type === 'error') alert(`分析エラー: ${ev.message}`);
+  }
+
+  // ── Follow-up buttons ──
+  function injectFollowUpButtons(mdText) {
+    // 推奨アクションセクションから番号付き項目を抽出
+    const lines = mdText.split('\n');
+    let inSection = false;
+    const actions = [];
+    for (const line of lines) {
+      if (/^##\s.*推奨アクション/.test(line)) { inSection = true; continue; }
+      if (inSection && /^##\s/.test(line)) break;
+      if (!inSection) continue;
+      // 「1. **【...**」や「- **...」形式を抽出
+      const m = line.match(/^[\d]+\.\s+\*\*(.+?)\*\*/) || line.match(/^[-*]\s+\*\*(.+?)\*\*/);
+      if (m) actions.push(m[1].replace(/【.+?】\s*/, '').trim());
+    }
+    if (actions.length === 0) return;
+
+    const bar = document.createElement('div');
+    bar.className = 'followup-bar';
+    bar.innerHTML = `<div class="followup-bar-title">続けて分析する</div>`;
+    actions.forEach(text => {
+      const btn = document.createElement('button');
+      btn.className = 'followup-btn';
+      btn.textContent = text.length > 40 ? text.slice(0, 40) + '…' : text;
+      btn.title = text;
+      btn.onclick = () => {
+        document.getElementById('requestText').value = text;
+        document.getElementById('requestText').scrollIntoView({ behavior: 'smooth' });
+        document.getElementById('requestText').focus();
+      };
+      bar.appendChild(btn);
+    });
+    document.getElementById('reportContent').appendChild(bar);
   }
 
   // ── Init ──
