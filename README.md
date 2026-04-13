@@ -198,8 +198,23 @@ AutoAnalytics/
 
 ## 今後の予定
 
+### Phase 2 - データソース拡充
+
 - [ ] Google Sheets Adapter
 - [ ] 複数データソースの同時ロード・JOIN 補助
+
+### Phase 3 - UI 改善
+
 - [ ] レポート履歴の一覧 UI 改善
+
+### Phase 4 - 分析品質向上
+
 - [ ] 評価セット（プロンプト改善の指標化）
+- [ ] memory.md コンテキスト層（KPI 定義・過去分析の発見・未実施 TODO を永続化し次回分析に引き継ぐ）
+- [ ] learned-corrections 蓄積（SQL エラーや仮説棄却パターンをプロンプトにフィードバック）
+
+### Phase 5 - 基盤拡張
+
 - [ ] Bedrock 対応（LLM 差し替え）
+- [ ] 専門プラグイン並列実行（KPI / SEO / 広告など分析ドメイン別エージェントを並列起動）
+- [ ] 外部サービス連携（Slack / Notion / JIRA への自動投稿 + cron 定期分析）
