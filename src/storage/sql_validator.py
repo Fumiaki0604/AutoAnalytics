@@ -69,8 +69,8 @@ def validate_and_sanitize(
         referenced = set(
             re.findall(r"(?:FROM|JOIN)\s+\"?(\w+)\"?", upper)
         )
-        # サブクエリ名・CTE 名は許容（WITH xxx AS で定義されるもの）
-        cte_names = set(re.findall(r"WITH\s+(\w+)\s+AS", upper))
+        # サブクエリ名・CTE 名は許容（WITH/カンマ区切りすべてを取得）
+        cte_names = set(re.findall(r"(?:WITH|,)\s*(\w+)\s+AS\s*\(", upper))
         unknown = referenced - {t.upper() for t in allowed_tables} - cte_names
         if unknown:
             raise SQLValidationError(
