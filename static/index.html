@@ -455,9 +455,13 @@
       if (/^##\s.*推奨アクション/.test(line)) { inSection = true; continue; }
       if (inSection && /^##\s/.test(line)) break;
       if (!inSection) continue;
-      // 「1. **アクション名**」形式のみ抽出（サブ箇条書きの実行主体・期限等は除外）
-      const m = line.match(/^\s*[\d]+\.\s+\*\*(.+?)\*\*/);
-      if (m) actions.push(m[1].replace(/【.+?】\s*/, '').trim());
+      // 番号付き項目を抽出（太字あり・なし両対応、インデントされたサブ項目は除外）
+      if (!/^\s*\d+\./.test(line)) continue;
+      const m = line.match(/^\s*\d+\.\s+(.+)/);
+      if (!m) continue;
+      // 太字マーカー除去 → 括弧・コロン以降を削除 → 短すぎる項目は除外
+      const text = m[1].replace(/\*\*/g, '').split(/[（(【：:]/)[0].trim();
+      if (text.length >= 5) actions.push(text);
     }
     if (actions.length === 0) return;
 
