@@ -210,8 +210,8 @@ AutoAnalytics/
 ### Phase 4 - 分析品質向上
 
 - [ ] 評価セット（プロンプト改善の指標化）
-- [ ] memory.md コンテキスト層（KPI 定義・過去分析の発見・未実施 TODO を永続化し次回分析に引き継ぐ）
-- [ ] learned-corrections 蓄積（SQL エラーや仮説棄却パターンをプロンプトにフィードバック）
+- [x] memory.md コンテキスト層（KPI 定義・過去分析の発見・未実施 TODO を永続化し次回分析に引き継ぐ）
+- [x] learned-corrections 蓄積（SQL エラーや仮説棄却パターンをプロンプトにフィードバック）
 
 ### Phase 5 - 基盤拡張
 
