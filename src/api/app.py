@@ -34,6 +34,7 @@ from src.orchestrator.hypothesis_generator import Hypothesis, HypothesisGenerato
 from src.orchestrator.report_generator import ReportGenerator
 from src.orchestrator.request_parser import ParsedRequest, RequestParser
 from src.storage.duckdb_client import DuckDBClient
+from src.storage.correction_store import format_corrections_context, get_recent_corrections, save_correction
 from src.storage.memory_store import format_past_context, get_recent_memories, save_memory
 from src.storage.sql_validator import SQLValidationError, validate_and_sanitize
 
@@ -130,9 +131,12 @@ def _run_analysis(
             past_context = format_past_context(
                 get_recent_memories(email, "csv") if email else []
             )
+            corrections_context = format_corrections_context(
+                get_recent_corrections(email, "csv") if email else []
+            )
             hypotheses: list[Hypothesis] = HypothesisGenerator(
                 llm, system_prompt, hypothesis_prompt
-            ).generate(parsed, context, past_context)
+            ).generate(parsed, context, past_context, corrections_context)
 
             allowed_tables = db.list_tables()
             for h in hypotheses:
@@ -153,9 +157,19 @@ def _run_analysis(
                 except SQLValidationError as e:
                     h.result = f"SQL バリデーションエラー: {e}"
                     h.status = "error"
+                    if email:
+                        try:
+                            save_correction(email, "csv", "sql_validation", h.sql[:300], str(e))
+                        except Exception:
+                            pass
                 except Exception as e:
                     h.result = f"SQL 実行エラー: {e}"
                     h.status = "error"
+                    if email:
+                        try:
+                            save_correction(email, "csv", "sql_execution", h.sql[:300], str(e))
+                        except Exception:
+                            pass
 
             emit({"step": 3, "status": "done", "message": f"{len(hypotheses)} つの仮説を検証完了"})
 
@@ -334,9 +348,12 @@ def _run_ga4_analysis(
             past_context = format_past_context(
                 get_recent_memories(email, property_id) if email else []
             )
+            corrections_context = format_corrections_context(
+                get_recent_corrections(email, property_id) if email else []
+            )
             hypotheses: list[Hypothesis] = HypothesisGenerator(
                 llm, system_prompt, hypothesis_prompt
-            ).generate(parsed, context, past_context)
+            ).generate(parsed, context, past_context, corrections_context)
 
             allowed_tables = db.list_tables()
             for h in hypotheses:
@@ -350,8 +367,18 @@ def _run_ga4_analysis(
                     h.status = "supported" if rows else "no_data"
                 except SQLValidationError as e:
                     h.result, h.status = f"SQL バリデーションエラー: {e}", "error"
+                    if email:
+                        try:
+                            save_correction(email, property_id, "sql_validation", h.sql[:300], str(e))
+                        except Exception:
+                            pass
                 except Exception as e:
                     h.result, h.status = f"SQL 実行エラー: {e}", "error"
+                    if email:
+                        try:
+                            save_correction(email, property_id, "sql_execution", h.sql[:300], str(e))
+                        except Exception:
+                            pass
 
             emit({"step": 3, "status": "done", "message": f"{len(hypotheses)} つの仮説を検証完了"})
 

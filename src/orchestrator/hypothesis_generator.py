@@ -46,6 +46,7 @@ class HypothesisGenerator:
         parsed: ParsedRequest,
         data_context: str,
         past_context: str = "（過去の分析履歴なし）",
+        corrections_context: str = "（過去のSQLエラー履歴なし）",
     ) -> list[Hypothesis]:
         prompt = self.template.format(
             summary=parsed.summary,
@@ -54,6 +55,7 @@ class HypothesisGenerator:
             table=parsed.target_table,
             data_context=data_context,
             past_context=past_context,
+            corrections_context=corrections_context,
         )
 
         response = self.llm.complete(
