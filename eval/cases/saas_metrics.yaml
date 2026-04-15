@@ -1,0 +1,4 @@
+name: SaaS月次KPI - チャーン急増の要因分析
+csv: data/sample_saas_metrics.csv
+request: チャーンレートが急増している。プラン別・地域別に原因を探りたい
+min_sql_success_rate: 0.5

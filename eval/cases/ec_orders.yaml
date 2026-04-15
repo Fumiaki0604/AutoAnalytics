@@ -1,0 +1,4 @@
+name: EC注文データ - 返品率上昇の要因分析
+csv: data/sample_ec_orders.csv
+request: 返品率が上昇している。カテゴリ別・チャネル別に原因を探りたい
+min_sql_success_rate: 0.5

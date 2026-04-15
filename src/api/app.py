@@ -35,6 +35,7 @@ from src.orchestrator.report_generator import ReportGenerator
 from src.orchestrator.request_parser import ParsedRequest, RequestParser
 from src.storage.duckdb_client import DuckDBClient
 from src.storage.correction_store import format_corrections_context, get_recent_corrections, save_correction
+from src.storage.eval_store import compute_and_save as eval_compute_and_save
 from src.storage.memory_store import format_past_context, get_recent_memories, save_memory
 from src.storage.sql_validator import SQLValidationError, validate_and_sanitize
 
@@ -184,7 +185,8 @@ def _run_analysis(
                 try:
                     save_memory(email, "csv", parsed.kpi, parsed.summary, findings, actions)
                 except Exception:
-                    pass  # メモリ保存失敗は分析結果に影響させない
+                    pass
+                eval_compute_and_save(email, "csv", hypotheses, report)
 
             emit({"step": 4, "status": "done", "message": "レポート生成完了"})
 
@@ -393,6 +395,7 @@ def _run_ga4_analysis(
                     save_memory(email, property_id, parsed.kpi, parsed.summary, findings, actions)
                 except Exception:
                     pass
+                eval_compute_and_save(email, property_id, hypotheses, report)
 
             emit({"step": 4, "status": "done", "message": "レポート生成完了"})
             emit({"type": "report", "content": report, "filename": output_path.name})
