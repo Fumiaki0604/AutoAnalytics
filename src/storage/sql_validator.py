@@ -47,6 +47,11 @@ def validate_and_sanitize(
         raise SQLValidationError("SQL が空です")
 
     normalized = sql.strip()
+
+    # --- 0. インラインコメント（-- ...）を除去 ---
+    # LLM が先頭行にコメントを生成するケースに対応。DuckDB は -- をネイティブサポートするが
+    # バリデーションの誤検知を防ぐため除去してから検証・実行する。
+    normalized = re.sub(r"--[^\n]*", "", normalized).strip()
     upper = normalized.upper()
 
     # --- 1. SELECT / WITH のみ許可 ---

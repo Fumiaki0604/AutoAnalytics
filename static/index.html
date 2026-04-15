@@ -58,6 +58,25 @@
     .followup-btn { display: inline-block; margin: 4px 4px 4px 0; padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--accent); background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 6px; cursor: pointer; transition: background .15s; }
     .followup-btn:hover { background: #e0e7ff; }
 
+    /* Review button in header */
+    .review-btn { background: transparent; color: #94a3b8; border: 1px solid #3730a3; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; margin-right: 8px; }
+    .review-btn:hover { color: #fff; border-color: #fff; }
+
+    /* Review modal */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; align-items: flex-start; justify-content: center; padding-top: 60px; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--surface); border-radius: var(--radius); box-shadow: 0 8px 40px rgba(0,0,0,.2); width: min(680px, 90vw); max-height: 80vh; display: flex; flex-direction: column; }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 14px; border-bottom: 1px solid var(--border); }
+    .modal-header h3 { font-size: 15px; font-weight: 700; }
+    .modal-close { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--muted); line-height: 1; padding: 2px 8px; }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+    .review-progress { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
+    .review-progress-item { font-size: 13px; color: var(--muted); padding: 3px 0; }
+    .review-progress-item.done { color: var(--success); font-weight: 600; }
+    .review-feedback { background: var(--bg); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+    .review-result { font-size: 13px; font-weight: 600; padding: 8px 0; }
+
     /* File drop */
     .drop-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 32px 16px; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; position: relative; }
     .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: #eef2ff; }
@@ -226,6 +245,28 @@
   </div>
 </div>
 
+<!-- Review modal -->
+<div class="modal-overlay" id="reviewModal" onclick="if(event.target===this)closeReview()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>🔧 プロンプト自動改善</h3>
+      <button class="modal-close" onclick="closeReview()">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="reviewStart">
+        <p style="font-size:13px;color:var(--muted);margin-bottom:16px">直近3件のレポートをAIがレビューし、<code>report_prompt.md</code> と <code>hypothesis_prompt.md</code> を自動改善します。</p>
+        <button class="run-btn" id="reviewRunBtn" onclick="startReview()">
+          <span id="reviewBtnIcon">▶</span>
+          <span id="reviewBtnLabel">レビューを開始する</span>
+        </button>
+      </div>
+      <div class="review-progress" id="reviewProgressList"></div>
+      <div class="review-feedback markdown" id="reviewFeedback" style="display:none"></div>
+      <div class="review-result" id="reviewResult"></div>
+    </div>
+  </div>
+</div>
+
 <script>
   // ── State ──
   let currentTab = 'csv';
@@ -247,6 +288,7 @@
         <div class="user-info">
           ${currentUser.picture ? `<img src="${currentUser.picture}" alt="">` : ''}
           <span>${currentUser.name || currentUser.email}</span>
+          <button class="review-btn" onclick="openReview()">🔧 プロンプト改善</button>
           <button class="logout-btn" onclick="logout()">ログアウト</button>
         </div>`;
     } else {
@@ -481,6 +523,91 @@
       bar.appendChild(btn);
     });
     document.getElementById('reportContent').appendChild(bar);
+  }
+
+  // ── Prompt Review ──
+  function openReview() {
+    document.getElementById('reviewModal').classList.add('open');
+    document.getElementById('reviewProgressList').innerHTML = '';
+    document.getElementById('reviewFeedback').style.display = 'none';
+    document.getElementById('reviewFeedback').innerHTML = '';
+    document.getElementById('reviewResult').textContent = '';
+    document.getElementById('reviewResult').style.color = '';
+    document.getElementById('reviewStart').style.display = 'block';
+    document.getElementById('reviewRunBtn').disabled = false;
+    document.getElementById('reviewBtnIcon').textContent = '▶';
+    document.getElementById('reviewBtnLabel').textContent = 'レビューを開始する';
+  }
+
+  function closeReview() {
+    document.getElementById('reviewModal').classList.remove('open');
+  }
+
+  async function startReview() {
+    const btn = document.getElementById('reviewRunBtn');
+    btn.disabled = true;
+    document.getElementById('reviewBtnIcon').textContent = '⏳';
+    document.getElementById('reviewBtnLabel').textContent = '実行中...';
+    document.getElementById('reviewProgressList').innerHTML = '';
+    document.getElementById('reviewFeedback').style.display = 'none';
+    document.getElementById('reviewResult').textContent = '';
+
+    function addProgress(msg) {
+      const el = document.createElement('div');
+      el.className = 'review-progress-item' + (msg.startsWith('✓') ? ' done' : '');
+      el.textContent = msg;
+      document.getElementById('reviewProgressList').appendChild(el);
+    }
+
+    try {
+      const res = await fetch('/api/review-prompt', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const ev = JSON.parse(line.slice(6));
+          if (ev.type === 'progress') {
+            addProgress(ev.message);
+          } else if (ev.type === 'feedback') {
+            const fb = document.getElementById('reviewFeedback');
+            fb.innerHTML = marked.parse(ev.content);
+            fb.style.display = 'block';
+            document.querySelectorAll('#reviewFeedback pre code').forEach(el => hljs.highlightElement(el));
+          } else if (ev.type === 'done') {
+            const result = document.getElementById('reviewResult');
+            result.style.color = 'var(--success)';
+            const updated = ev.updated || [];
+            result.textContent = updated.length > 0
+              ? `✅ ${ev.message}（更新: ${updated.join(', ')}）`
+              : `✅ ${ev.message}`;
+          } else if (ev.type === 'error') {
+            const result = document.getElementById('reviewResult');
+            result.style.color = 'var(--error)';
+            result.textContent = `エラー: ${ev.message}`;
+          }
+        }
+      }
+    } catch (e) {
+      document.getElementById('reviewResult').style.color = 'var(--error)';
+      document.getElementById('reviewResult').textContent = `エラー: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+      document.getElementById('reviewBtnIcon').textContent = '▶';
+      document.getElementById('reviewBtnLabel').textContent = 'レビューを開始する';
+    }
   }
 
   // ── Init ──

@@ -21,12 +21,14 @@ from src.adapters.ga4_adapter import GA4Adapter
 from src.auth.google_oauth import (
     build_auth_url,
     exchange_code,
+    refresh_access_token,
 )
 from src.auth.session_store import (
     create_session,
     delete_session,
     get_session,
     save_state,
+    update_access_token,
     verify_and_consume_state,
 )
 from src.llm.anthropic_client import AnthropicClient
@@ -34,9 +36,11 @@ from src.orchestrator.hypothesis_generator import Hypothesis, HypothesisGenerato
 from src.orchestrator.report_generator import ReportGenerator
 from src.orchestrator.request_parser import ParsedRequest, RequestParser
 from src.storage.duckdb_client import DuckDBClient
+from src.orchestrator.prompt_reviewer import PromptReviewer
 from src.storage.correction_store import format_corrections_context, get_recent_corrections, save_correction
 from src.storage.eval_store import compute_and_save as eval_compute_and_save
 from src.storage.memory_store import format_past_context, get_recent_memories, save_memory
+from src.storage.prompt_store import PROMPT_FILES, save_prompt_version
 from src.storage.sql_validator import SQLValidationError, validate_and_sanitize
 
 load_dotenv()
@@ -316,6 +320,8 @@ def _run_ga4_analysis(
     queue: asyncio.Queue,
     loop: asyncio.AbstractEventLoop,
     email: str = "",
+    refresh_token: str = "",
+    session_id: str = "",
 ) -> None:
     def emit(event: dict) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
@@ -332,7 +338,16 @@ def _run_ga4_analysis(
 
             # Step 1: GA4 データ取得
             emit({"step": 1, "status": "running", "message": "GA4 からデータを取得中..."})
-            meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
+            try:
+                meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
+            except Exception:
+                # トークン期限切れならリフレッシュして再試行
+                if not refresh_token:
+                    raise
+                access_token = refresh_access_token(refresh_token)
+                if session_id:
+                    update_access_token(session_id, access_token)
+                meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
             emit({"step": 1, "status": "done", "message": meta.summary()})
 
             # Step 2〜4 は CSV フローと共通
@@ -407,6 +422,21 @@ def _run_ga4_analysis(
         Path(db_path).unlink(missing_ok=True)
 
 
+def _fetch_ga4_properties(access_token: str) -> list[dict]:
+    creds = GoogleCredentials(token=access_token)
+    client = AnalyticsAdminServiceClient(credentials=creds)
+    properties = []
+    for summary in client.list_account_summaries():
+        for prop in summary.property_summaries:
+            prop_id = prop.property.split("/")[-1]
+            properties.append({
+                "id": prop_id,
+                "name": prop.display_name,
+                "account": summary.display_name,
+            })
+    return properties
+
+
 @app.get("/api/ga4/properties")
 async def list_ga4_properties(session_id: str = Cookie(default="")) -> list[dict]:
     """ログインユーザーがアクセスできるGA4プロパティ一覧を返す。"""
@@ -417,20 +447,18 @@ async def list_ga4_properties(session_id: str = Cookie(default="")) -> list[dict
     if not access_token:
         raise HTTPException(status_code=401, detail="アクセストークンがありません")
     try:
-        creds = GoogleCredentials(token=access_token)
-        client = AnalyticsAdminServiceClient(credentials=creds)
-        properties = []
-        for summary in client.list_account_summaries():
-            for prop in summary.property_summaries:
-                prop_id = prop.property.split("/")[-1]
-                properties.append({
-                    "id": prop_id,
-                    "name": prop.display_name,
-                    "account": summary.display_name,
-                })
-        return properties
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _fetch_ga4_properties(access_token)
+    except Exception:
+        # トークン期限切れの場合はリフレッシュして再試行
+        rt = session.get("refresh_token")
+        if not rt:
+            raise HTTPException(status_code=401, detail="セッションが期限切れです。再ログインしてください。")
+        try:
+            new_token = refresh_access_token(rt)
+            update_access_token(session_id, new_token)
+            return _fetch_ga4_properties(new_token)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/analyze/ga4")
@@ -452,13 +480,92 @@ async def analyze_ga4(
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
     email = session.get("email", "")
+    refresh_token = session.get("refresh_token", "")
     loop.run_in_executor(
         _executor, _run_ga4_analysis,
         property_id, start_date, end_date, request_text, access_token, queue, loop, email,
+        refresh_token, session_id,
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
         deadline = asyncio.get_running_loop().time() + 180.0
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'タイムアウト'}, ensure_ascii=False)}\n\n"
+                break
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=min(15.0, remaining))
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                if event.get("type") in ("end", "error"):
+                    break
+            except asyncio.TimeoutError:
+                yield ": heartbeat\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _run_prompt_review(queue: asyncio.Queue, loop: asyncio.AbstractEventLoop) -> None:
+    def emit(event: dict) -> None:
+        asyncio.run_coroutine_threadsafe(queue.put(event), loop)
+
+    try:
+        report_files = sorted(REPORTS_DIR.glob("*.md"), reverse=True)[:3]
+        report_texts = [r.read_text(encoding="utf-8") for r in report_files]
+
+        if not report_texts:
+            emit({"type": "error", "message": "reports/ にレポートがありません。先に分析を実行してください。"})
+            return
+
+        emit({"type": "progress", "message": f"{len(report_texts)} 件のレポートを読み込みました"})
+
+        reviewer = PromptReviewer()
+        emit({"type": "progress", "message": "Reviewer: レポートを審査中..."})
+        feedback = reviewer.review(report_texts)
+
+        emit({"type": "feedback", "content": feedback.raw})
+
+        if feedback.is_empty:
+            emit({"type": "done", "message": "品質上の問題は検出されませんでした", "updated": []})
+            return
+
+        updated = []
+        for name, filepath in PROMPT_FILES.items():
+            emit({"type": "progress", "message": f"PromptEngineer: {name} を改善中..."})
+            path = Path(filepath)
+            if not path.exists():
+                emit({"type": "progress", "message": f"{name}: ファイルが見つかりません"})
+                continue
+            current = path.read_text(encoding="utf-8")
+            improved = reviewer.improve_prompt(name, current, feedback)
+            save_prompt_version(name, improved, review_feedback=feedback.raw)
+            updated.append(name)
+            emit({"type": "progress", "message": f"✓ {name} を更新しました"})
+
+        emit({"type": "done", "message": "プロンプト改善が完了しました", "updated": updated})
+
+    except Exception as e:
+        emit({"type": "error", "message": str(e)})
+    finally:
+        emit({"type": "end"})
+
+
+@app.post("/api/review-prompt")
+async def review_prompt_api(session_id: str = Cookie(default="")) -> StreamingResponse:
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="ログインが必要です")
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    loop.run_in_executor(_executor, _run_prompt_review, queue, loop)
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        deadline = asyncio.get_running_loop().time() + 300.0  # 5分タイムアウト
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:

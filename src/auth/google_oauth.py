@@ -52,6 +52,22 @@ def build_auth_url() -> tuple[str, str]:
     return f"{GOOGLE_AUTH_URL}?{urlencode(params)}", state
 
 
+def refresh_access_token(refresh_token: str) -> str:
+    """リフレッシュトークンで新しいアクセストークンを取得する（同期）。"""
+    with httpx.Client() as client:
+        res = client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+        )
+        res.raise_for_status()
+        return res.json()["access_token"]
+
+
 async def exchange_code(code: str) -> dict:
     """認可コードをトークンに交換し、ユーザー情報を取得して返す。"""
     async with httpx.AsyncClient() as client:

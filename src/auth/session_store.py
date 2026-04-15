@@ -57,6 +57,12 @@ def get_session(session_id: Optional[str]) -> Optional[dict]:
     return res.data if res.data else None
 
 
+def update_access_token(session_id: str, access_token: str) -> None:
+    _get_client().table("sessions").update(
+        {"access_token": access_token}
+    ).eq("id", session_id).execute()
+
+
 def delete_session(session_id: str) -> None:
     _get_client().table("sessions").delete().eq("id", session_id).execute()
 
