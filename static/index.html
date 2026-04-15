@@ -455,8 +455,8 @@
       if (/^##\s.*推奨アクション/.test(line)) { inSection = true; continue; }
       if (inSection && /^##\s/.test(line)) break;
       if (!inSection) continue;
-      // 「1. **【...**」や「- **...」形式を抽出
-      const m = line.match(/^[\d]+\.\s+\*\*(.+?)\*\*/) || line.match(/^[-*]\s+\*\*(.+?)\*\*/);
+      // 「1. **アクション名**」形式のみ抽出（サブ箇条書きの実行主体・期限等は除外）
+      const m = line.match(/^\s*[\d]+\.\s+\*\*(.+?)\*\*/);
       if (m) actions.push(m[1].replace(/【.+?】\s*/, '').trim());
     }
     if (actions.length === 0) return;
