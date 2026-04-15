@@ -209,7 +209,10 @@ def _run_analysis(
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse("static/index.html")
+    return FileResponse(
+        "static/index.html",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/api/analyze")
