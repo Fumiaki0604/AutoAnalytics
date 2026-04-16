@@ -36,6 +36,7 @@ from src.orchestrator.hypothesis_generator import Hypothesis, HypothesisGenerato
 from src.orchestrator.report_generator import ReportGenerator
 from src.orchestrator.request_parser import ParsedRequest, RequestParser
 from src.storage.duckdb_client import DuckDBClient
+from src.orchestrator.marketing_agent import generate_marketing_insight
 from src.orchestrator.prompt_reviewer import PromptReviewer
 from src.storage.correction_store import format_corrections_context, get_recent_corrections, save_correction
 from src.storage.eval_store import compute_and_save as eval_compute_and_save
@@ -193,8 +194,16 @@ def _run_analysis(
                 eval_compute_and_save(email, "csv", hypotheses, report)
 
             emit({"step": 4, "status": "done", "message": "レポート生成完了"})
-
             emit({"type": "report", "content": report, "filename": output_path.name})
+
+            # Step 5: マーケティング提案（失敗しても分析結果には影響しない）
+            try:
+                emit({"step": 5, "status": "running", "message": "マーケティング視点で知見を検索中..."})
+                marketing = generate_marketing_insight(report)
+                emit({"step": 5, "status": "done", "message": "マーケティング提案を生成しました"})
+                emit({"type": "marketing", "content": marketing})
+            except Exception:
+                pass
 
     except Exception as e:
         emit({"type": "error", "message": str(e)})
@@ -417,6 +426,15 @@ def _run_ga4_analysis(
 
             emit({"step": 4, "status": "done", "message": "レポート生成完了"})
             emit({"type": "report", "content": report, "filename": output_path.name})
+
+            # Step 5: マーケティング提案（失敗しても分析結果には影響しない）
+            try:
+                emit({"step": 5, "status": "running", "message": "マーケティング視点で知見を検索中..."})
+                marketing = generate_marketing_insight(report)
+                emit({"step": 5, "status": "done", "message": "マーケティング提案を生成しました"})
+                emit({"type": "marketing", "content": marketing})
+            except Exception:
+                pass
 
     except Exception as e:
         emit({"type": "error", "message": str(e)})

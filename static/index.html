@@ -242,6 +242,12 @@
       </div>
       <div class="markdown" id="reportContent"></div>
     </div>
+    <div class="report-wrap" id="marketingWrap" style="display:none; margin-top:16px; border-left: 3px solid #7c3aed;">
+      <div class="report-actions">
+        <span class="title">📚 マーケティング視点からの提案</span>
+      </div>
+      <div class="markdown" id="marketingContent"></div>
+    </div>
   </div>
 </div>
 
@@ -424,6 +430,7 @@
     // Reset UI
     document.getElementById('emptyState').style.display = 'none';
     document.getElementById('reportWrap').style.display = 'none';
+    document.getElementById('marketingWrap').style.display = 'none';
     document.getElementById('progressCard').style.display = '';
     document.getElementById('parsedInfo').style.display = 'none';
     [1,2,3,4].forEach(n => setStep(n, 'idle', '待機中'));
@@ -482,6 +489,11 @@
       document.getElementById('reportWrap').style.display = 'block';
       document.querySelectorAll('#reportContent pre code').forEach(el => hljs.highlightElement(el));
       injectFollowUpButtons(ev.content);
+      return;
+    }
+    if (ev.type === 'marketing') {
+      document.getElementById('marketingContent').innerHTML = marked.parse(ev.content);
+      document.getElementById('marketingWrap').style.display = 'block';
       return;
     }
     if (ev.type === 'error') alert(`分析エラー: ${ev.message}`);
