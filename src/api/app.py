@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from fastapi import Cookie, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Cookie, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -89,6 +89,98 @@ def _fmt_result(rows: list[dict], max_rows: int = 10) -> str:
 # 同期分析ランナー（スレッド内で実行）
 # ------------------------------------------------------------------
 
+def _run_shared_steps(
+    db: DuckDBClient,
+    request_text: str,
+    source_id: str,
+    emit: callable,
+    email: str = "",
+) -> None:
+    """Step 2〜5: 依頼パース → 仮説検証 → レポート → マーケティング提案。
+    CSV・GA4 両フローで共有する。
+    """
+    system_prompt = _load_prompt("system_prompt.md")
+    hypothesis_prompt = _load_prompt("hypothesis_prompt.md")
+    report_prompt = _load_prompt("report_prompt.md")
+    llm = AnthropicClient()
+
+    # Step 2: 依頼パース
+    emit({"step": 2, "status": "running", "message": "分析依頼を解析中..."})
+    parsed: ParsedRequest = RequestParser(llm, system_prompt).parse(
+        request_text, db.list_tables()
+    )
+    emit({
+        "step": 2, "status": "done", "message": parsed.summary,
+        "detail": {"kpi": parsed.kpi, "period": parsed.period, "dimensions": parsed.dimensions},
+    })
+
+    # Step 3: 仮説生成 & SQL 実行
+    emit({"step": 3, "status": "running", "message": "仮説を生成中..."})
+    context = _data_context(db, parsed.target_table)
+    past_context = format_past_context(
+        get_recent_memories(email, source_id) if email else []
+    )
+    corrections_context = format_corrections_context(
+        get_recent_corrections(email, source_id) if email else []
+    )
+    hypotheses: list[Hypothesis] = HypothesisGenerator(
+        llm, system_prompt, hypothesis_prompt
+    ).generate(parsed, context, past_context, corrections_context)
+
+    allowed_tables = db.list_tables()
+    for h in hypotheses:
+        emit({"step": 3, "status": "running", "message": f"仮説 {h.index} を検証中: {h.title[:40]}..."})
+        if not h.sql:
+            h.result, h.status = "（SQL なし）", "no_sql"
+            continue
+        try:
+            rows = db.query(validate_and_sanitize(h.sql, allowed_tables))
+            h.result = _fmt_result(rows) if rows else "（該当データなし）"
+            h.status = "supported" if rows else "no_data"
+        except SQLValidationError as e:
+            h.result, h.status = f"SQL バリデーションエラー: {e}", "error"
+            if email:
+                try:
+                    save_correction(email, source_id, "sql_validation", h.sql[:300], str(e))
+                except Exception:
+                    pass
+        except Exception as e:
+            h.result, h.status = f"SQL 実行エラー: {e}", "error"
+            if email:
+                try:
+                    save_correction(email, source_id, "sql_execution", h.sql[:300], str(e))
+                except Exception:
+                    pass
+
+    emit({"step": 3, "status": "done", "message": f"{len(hypotheses)} つの仮説を検証完了"})
+
+    # Step 4: レポート生成
+    emit({"step": 4, "status": "running", "message": "レポートを生成中..."})
+    rep_gen = ReportGenerator(llm, system_prompt, report_prompt)
+    report = rep_gen.generate(parsed, hypotheses)
+    output_path = rep_gen.save(report, str(REPORTS_DIR))
+
+    if email:
+        findings, actions = ReportGenerator.extract_summary_and_actions(report)
+        try:
+            save_memory(email, source_id, parsed.kpi, parsed.summary, findings, actions)
+        except Exception:
+            pass
+        eval_compute_and_save(email, source_id, hypotheses, report)
+
+    emit({"step": 4, "status": "done", "message": "レポート生成完了"})
+    emit({"type": "report", "content": report, "filename": output_path.name})
+
+    # Step 5: マーケティング提案（失敗しても分析結果には影響しない）
+    try:
+        emit({"step": 5, "status": "running", "message": "マーケティング視点で知見を検索中..."})
+        marketing = generate_marketing_insight(report)
+        emit({"step": 5, "status": "done", "message": "マーケティング提案を生成しました"})
+        emit({"type": "marketing", "content": marketing})
+    except Exception:
+        pass
+
+
 def _run_analysis(
     csv_path: str,
     request_text: str,
@@ -101,110 +193,12 @@ def _run_analysis(
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
 
     db_path = str(DATA_DIR / f"session_{uuid.uuid4().hex}.duckdb")
-
     try:
-        system_prompt = _load_prompt("system_prompt.md")
-        hypothesis_prompt = _load_prompt("hypothesis_prompt.md")
-        report_prompt = _load_prompt("report_prompt.md")
-        llm = AnthropicClient()
-
         with DuckDBClient(db_path) as db:
-
-            # Step 1: CSV ロード
             emit({"step": 1, "status": "running", "message": "CSV を読み込み中..."})
             meta = CSVAdapter(db).load(csv_path, table_name)
             emit({"step": 1, "status": "done", "message": meta.summary()})
-
-            # Step 2: 依頼パース
-            emit({"step": 2, "status": "running", "message": "分析依頼を解析中..."})
-            parsed: ParsedRequest = RequestParser(llm, system_prompt).parse(
-                request_text, db.list_tables()
-            )
-            emit({
-                "step": 2,
-                "status": "done",
-                "message": parsed.summary,
-                "detail": {
-                    "kpi": parsed.kpi,
-                    "period": parsed.period,
-                    "dimensions": parsed.dimensions,
-                },
-            })
-
-            # Step 3: 仮説生成 & SQL 実行
-            emit({"step": 3, "status": "running", "message": "仮説を生成中..."})
-            context = _data_context(db, parsed.target_table)
-            past_context = format_past_context(
-                get_recent_memories(email, "csv") if email else []
-            )
-            corrections_context = format_corrections_context(
-                get_recent_corrections(email, "csv") if email else []
-            )
-            hypotheses: list[Hypothesis] = HypothesisGenerator(
-                llm, system_prompt, hypothesis_prompt
-            ).generate(parsed, context, past_context, corrections_context)
-
-            allowed_tables = db.list_tables()
-            for h in hypotheses:
-                emit({"step": 3, "status": "running", "message": f"仮説 {h.index} を検証中: {h.title[:40]}..."})
-                if not h.sql:
-                    h.result = "（SQL なし）"
-                    h.status = "no_sql"
-                    continue
-                try:
-                    safe_sql = validate_and_sanitize(h.sql, allowed_tables)
-                    rows = db.query(safe_sql)
-                    if rows:
-                        h.result = _fmt_result(rows)
-                        h.status = "supported"
-                    else:
-                        h.result = "（該当データなし）"
-                        h.status = "no_data"
-                except SQLValidationError as e:
-                    h.result = f"SQL バリデーションエラー: {e}"
-                    h.status = "error"
-                    if email:
-                        try:
-                            save_correction(email, "csv", "sql_validation", h.sql[:300], str(e))
-                        except Exception:
-                            pass
-                except Exception as e:
-                    h.result = f"SQL 実行エラー: {e}"
-                    h.status = "error"
-                    if email:
-                        try:
-                            save_correction(email, "csv", "sql_execution", h.sql[:300], str(e))
-                        except Exception:
-                            pass
-
-            emit({"step": 3, "status": "done", "message": f"{len(hypotheses)} つの仮説を検証完了"})
-
-            # Step 4: レポート生成
-            emit({"step": 4, "status": "running", "message": "レポートを生成中..."})
-            rep_gen = ReportGenerator(llm, system_prompt, report_prompt)
-            report = rep_gen.generate(parsed, hypotheses)
-            output_path = rep_gen.save(report, str(REPORTS_DIR))
-
-            if email:
-                findings, actions = ReportGenerator.extract_summary_and_actions(report)
-                try:
-                    save_memory(email, "csv", parsed.kpi, parsed.summary, findings, actions)
-                except Exception:
-                    pass
-                eval_compute_and_save(email, "csv", hypotheses, report)
-
-            emit({"step": 4, "status": "done", "message": "レポート生成完了"})
-            emit({"type": "report", "content": report, "filename": output_path.name})
-
-            # Step 5: マーケティング提案（失敗しても分析結果には影響しない）
-            try:
-                emit({"step": 5, "status": "running", "message": "マーケティング視点で知見を検索中..."})
-                marketing = generate_marketing_insight(report)
-                emit({"step": 5, "status": "done", "message": "マーケティング提案を生成しました"})
-                emit({"type": "marketing", "content": marketing})
-            except Exception:
-                pass
-
+            _run_shared_steps(db, request_text, "csv", emit, email)
     except Exception as e:
         emit({"type": "error", "message": str(e)})
     finally:
@@ -287,7 +281,6 @@ async def auth_login() -> RedirectResponse:
 async def auth_callback(
     code: str,
     state: str,
-    request: Request,
 ) -> RedirectResponse:
     if not verify_and_consume_state(state):
         raise HTTPException(status_code=400, detail="Invalid state")
@@ -339,21 +332,13 @@ def _run_ga4_analysis(
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
 
     db_path = str(DATA_DIR / f"session_{uuid.uuid4().hex}.duckdb")
-
     try:
-        system_prompt = _load_prompt("system_prompt.md")
-        hypothesis_prompt = _load_prompt("hypothesis_prompt.md")
-        report_prompt = _load_prompt("report_prompt.md")
-        llm = AnthropicClient()
-
         with DuckDBClient(db_path) as db:
-
-            # Step 1: GA4 データ取得
+            # Step 1: GA4 データ取得（トークンリフレッシュ対応）
             emit({"step": 1, "status": "running", "message": "GA4 からデータを取得中..."})
             try:
                 meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
             except Exception:
-                # トークン期限切れならリフレッシュして再試行
                 if not refresh_token:
                     raise
                 access_token = refresh_access_token(refresh_token)
@@ -362,80 +347,7 @@ def _run_ga4_analysis(
                 meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
             emit({"step": 1, "status": "done", "message": meta.summary()})
 
-            # Step 2〜4 は CSV フローと共通
-            emit({"step": 2, "status": "running", "message": "分析依頼を解析中..."})
-            parsed: ParsedRequest = RequestParser(llm, system_prompt).parse(
-                request_text, db.list_tables()
-            )
-            emit({
-                "step": 2, "status": "done", "message": parsed.summary,
-                "detail": {"kpi": parsed.kpi, "period": parsed.period, "dimensions": parsed.dimensions},
-            })
-
-            emit({"step": 3, "status": "running", "message": "仮説を生成中..."})
-            context = _data_context(db, parsed.target_table)
-            past_context = format_past_context(
-                get_recent_memories(email, property_id) if email else []
-            )
-            corrections_context = format_corrections_context(
-                get_recent_corrections(email, property_id) if email else []
-            )
-            hypotheses: list[Hypothesis] = HypothesisGenerator(
-                llm, system_prompt, hypothesis_prompt
-            ).generate(parsed, context, past_context, corrections_context)
-
-            allowed_tables = db.list_tables()
-            for h in hypotheses:
-                emit({"step": 3, "status": "running", "message": f"仮説 {h.index} を検証中: {h.title[:40]}..."})
-                if not h.sql:
-                    h.result, h.status = "（SQL なし）", "no_sql"
-                    continue
-                try:
-                    rows = db.query(validate_and_sanitize(h.sql, allowed_tables))
-                    h.result = _fmt_result(rows) if rows else "（該当データなし）"
-                    h.status = "supported" if rows else "no_data"
-                except SQLValidationError as e:
-                    h.result, h.status = f"SQL バリデーションエラー: {e}", "error"
-                    if email:
-                        try:
-                            save_correction(email, property_id, "sql_validation", h.sql[:300], str(e))
-                        except Exception:
-                            pass
-                except Exception as e:
-                    h.result, h.status = f"SQL 実行エラー: {e}", "error"
-                    if email:
-                        try:
-                            save_correction(email, property_id, "sql_execution", h.sql[:300], str(e))
-                        except Exception:
-                            pass
-
-            emit({"step": 3, "status": "done", "message": f"{len(hypotheses)} つの仮説を検証完了"})
-
-            emit({"step": 4, "status": "running", "message": "レポートを生成中..."})
-            rep_gen = ReportGenerator(llm, system_prompt, report_prompt)
-            report = rep_gen.generate(parsed, hypotheses)
-            output_path = rep_gen.save(report, str(REPORTS_DIR))
-
-            if email:
-                findings, actions = ReportGenerator.extract_summary_and_actions(report)
-                try:
-                    save_memory(email, property_id, parsed.kpi, parsed.summary, findings, actions)
-                except Exception:
-                    pass
-                eval_compute_and_save(email, property_id, hypotheses, report)
-
-            emit({"step": 4, "status": "done", "message": "レポート生成完了"})
-            emit({"type": "report", "content": report, "filename": output_path.name})
-
-            # Step 5: マーケティング提案（失敗しても分析結果には影響しない）
-            try:
-                emit({"step": 5, "status": "running", "message": "マーケティング視点で知見を検索中..."})
-                marketing = generate_marketing_insight(report)
-                emit({"step": 5, "status": "done", "message": "マーケティング提案を生成しました"})
-                emit({"type": "marketing", "content": marketing})
-            except Exception:
-                pass
-
+            _run_shared_steps(db, request_text, property_id, emit, email)
     except Exception as e:
         emit({"type": "error", "message": str(e)})
     finally:
