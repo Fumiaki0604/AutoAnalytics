@@ -17,6 +17,7 @@ from google.analytics.admin import AnalyticsAdminServiceClient
 from google.oauth2.credentials import Credentials as GoogleCredentials
 
 from src.adapters.csv_adapter import CSVAdapter
+from src.adapters.drive_adapter import find_folder_by_name, get_recent_docs_text, list_folders
 from src.adapters.ga4_adapter import GA4Adapter
 from src.auth.google_oauth import (
     build_auth_url,
@@ -173,6 +174,21 @@ def _run_shared_steps(
 
 
 
+def _fetch_drive_context(access_token: str, folder_id: str, emit: callable) -> str:
+    """Drive フォルダから最新議事録を取得してコンテキスト文字列を返す。失敗時は空文字列。"""
+    if not access_token or not folder_id:
+        return ""
+    try:
+        emit({"type": "drive_status", "message": "Drive から資料を取得中..."})
+        text = get_recent_docs_text(access_token, folder_id)
+        if text:
+            emit({"type": "drive_status", "message": "Drive 資料を取得しました"})
+            return f"[クライアント資料（直近の議事録）]\n{text}\n\n"
+    except Exception:
+        pass
+    return ""
+
+
 def _run_analysis(
     csv_path: str,
     request_text: str,
@@ -180,6 +196,8 @@ def _run_analysis(
     queue: asyncio.Queue,
     loop: asyncio.AbstractEventLoop,
     email: str = "",
+    access_token: str = "",
+    drive_folder_id: str = "",
 ) -> None:
     def emit(event: dict) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
@@ -190,7 +208,10 @@ def _run_analysis(
             emit({"step": 1, "status": "running", "message": "CSV を読み込み中..."})
             meta = CSVAdapter(db).load(csv_path, table_name)
             emit({"step": 1, "status": "done", "message": meta.summary()})
-            _run_shared_steps(db, request_text, "csv", emit, email)
+
+            client_context = _fetch_drive_context(access_token, drive_folder_id, emit)
+            augmented = f"{client_context}{request_text}" if client_context else request_text
+            _run_shared_steps(db, augmented, "csv", emit, email)
     except Exception as e:
         emit({"type": "error", "message": str(e)})
     finally:
@@ -210,11 +231,27 @@ async def index() -> FileResponse:
     )
 
 
+@app.get("/api/drive/folders")
+async def drive_folders(session_id: str = Cookie(default="")) -> list[dict]:
+    """ログインユーザーがアクセスできる Drive フォルダ一覧を返す。"""
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="ログインが必要です")
+    access_token = session.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=401, detail="アクセストークンがありません")
+    try:
+        return list_folders(access_token)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/analyze")
 async def analyze(
     csv_file: UploadFile = File(...),
     request_text: str = Form(...),
     table_name: str = Form("main_data"),
+    drive_folder_id: str = Form(default=""),
     session_id: str = Cookie(default=""),
 ) -> StreamingResponse:
     # CSV を一時ファイルに保存
@@ -225,12 +262,14 @@ async def analyze(
 
     session = get_session(session_id)
     email = session.get("email", "") if session else ""
+    access_token = session.get("access_token", "") if session else ""
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
     loop.run_in_executor(
-        _executor, _run_analysis, tmp_path, request_text, table_name, queue, loop, email
+        _executor, _run_analysis,
+        tmp_path, request_text, table_name, queue, loop, email, access_token, drive_folder_id,
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -339,10 +378,19 @@ def _run_ga4_analysis(
                 meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
             emit({"step": 1, "status": "done", "message": meta.summary()})
 
+            # Drive: property_id と同名フォルダを自動検索
+            drive_folder_id = ""
+            try:
+                drive_folder_id = find_folder_by_name(access_token, property_id) or ""
+            except Exception:
+                pass
+            client_context = _fetch_drive_context(access_token, drive_folder_id, emit)
+
             augmented_request = (
                 f"[重要: 取得データは {start_date} 〜 {end_date} の期間のみ存在する。"
                 f"SQL の WHERE 句およびレポートの期間記述はこの範囲を厳守すること。"
                 f"3月など範囲外の月を含めてはならない。]\n"
+                f"{client_context}"
                 f"{request_text}"
             )
             _run_shared_steps(db, augmented_request, property_id, emit, email)

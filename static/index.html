@@ -177,6 +177,12 @@
           <div class="drop-hint">CSV をドラッグ＆ドロップ<br>または <strong>クリックして選択</strong></div>
           <div class="file-name" id="fileName"></div>
         </div>
+        <div id="csvDriveSection" style="display:none; margin-top:14px;">
+          <label style="margin-top:0">📁 クライアント資料フォルダ（任意）</label>
+          <select id="csvDriveFolderId">
+            <option value="">選択しない</option>
+          </select>
+        </div>
       </div>
 
       <!-- GA4 panel -->
@@ -334,12 +340,33 @@
       notice.style.borderColor = '#6ee7b7';
       notice.style.color = '#065f46';
       loadGA4Properties();
+      loadDriveFolders();
     } else {
       notice.innerHTML = `GA4 分析には Google ログインが必要です。<a href="/auth/login">ログイン</a>`;
       notice.style.background = '#eef2ff';
       notice.style.borderColor = '#c7d2fe';
       notice.style.color = '#3730a3';
       resetPropertySelect();
+      document.getElementById('csvDriveSection').style.display = 'none';
+    }
+  }
+
+  async function loadDriveFolders() {
+    try {
+      const res = await fetch('/api/drive/folders');
+      if (!res.ok) return;
+      const folders = await res.json();
+      const sel = document.getElementById('csvDriveFolderId');
+      sel.innerHTML = '<option value="">選択しない</option>';
+      folders.forEach(f => {
+        const opt = document.createElement('option');
+        opt.value = f.id;
+        opt.textContent = f.name;
+        sel.appendChild(opt);
+      });
+      document.getElementById('csvDriveSection').style.display = '';
+    } catch (e) {
+      // Drive スコープ未付与など → セクション非表示のまま
     }
   }
 
@@ -428,6 +455,8 @@
       const formData = new FormData();
       formData.append('csv_file', file);
       formData.append('request_text', request);
+      const driveFolderId = document.getElementById('csvDriveFolderId').value;
+      if (driveFolderId) formData.append('drive_folder_id', driveFolderId);
       fetchPromise = fetch('/api/analyze', { method: 'POST', body: formData });
 
     } else {
