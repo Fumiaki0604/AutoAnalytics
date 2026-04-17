@@ -473,7 +473,7 @@
 
   function handleEvent(ev) {
     if (ev.step) {
-      setStep(ev.step, ev.status, ev.message);
+      if (ev.step <= 4) setStep(ev.step, ev.status, ev.message);
       if (ev.detail) {
         document.getElementById('piKpi').textContent    = ev.detail.kpi    || '—';
         document.getElementById('piPeriod').textContent = ev.detail.period || '—';

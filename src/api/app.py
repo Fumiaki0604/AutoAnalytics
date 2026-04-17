@@ -347,7 +347,8 @@ def _run_ga4_analysis(
                 meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
             emit({"step": 1, "status": "done", "message": meta.summary()})
 
-            _run_shared_steps(db, request_text, property_id, emit, email)
+            augmented_request = f"[データ取得期間: {start_date} 〜 {end_date}]\n{request_text}"
+            _run_shared_steps(db, augmented_request, property_id, emit, email)
     except Exception as e:
         emit({"type": "error", "message": str(e)})
     finally:
