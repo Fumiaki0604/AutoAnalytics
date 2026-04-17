@@ -171,14 +171,6 @@ def _run_shared_steps(
     emit({"step": 4, "status": "done", "message": "レポート生成完了"})
     emit({"type": "report", "content": report, "filename": output_path.name})
 
-    # Step 5: マーケティング提案（失敗しても分析結果には影響しない）
-    try:
-        emit({"step": 5, "status": "running", "message": "マーケティング視点で知見を検索中..."})
-        marketing = generate_marketing_insight(report)
-        emit({"step": 5, "status": "done", "message": "マーケティング提案を生成しました"})
-        emit({"type": "marketing", "content": marketing})
-    except Exception:
-        pass
 
 
 def _run_analysis(
@@ -505,6 +497,55 @@ async def review_prompt_api(session_id: str = Cookie(default="")) -> StreamingRe
 
     async def event_stream() -> AsyncGenerator[str, None]:
         deadline = asyncio.get_running_loop().time() + 300.0  # 5分タイムアウト
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'タイムアウト'}, ensure_ascii=False)}\n\n"
+                break
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=min(15.0, remaining))
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                if event.get("type") in ("end", "error"):
+                    break
+            except asyncio.TimeoutError:
+                yield ": heartbeat\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _run_marketing_insight(
+    report_text: str,
+    queue: asyncio.Queue,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    def emit(event: dict) -> None:
+        asyncio.run_coroutine_threadsafe(queue.put(event), loop)
+    try:
+        content = generate_marketing_insight(report_text)
+        emit({"type": "marketing", "content": content})
+    except Exception as e:
+        emit({"type": "error", "message": str(e)})
+    finally:
+        emit({"type": "end"})
+
+
+@app.post("/api/marketing-insight")
+async def marketing_insight_api(filename: str = Form(...)) -> StreamingResponse:
+    path = REPORTS_DIR / filename
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="レポートが見つかりません")
+    report_text = path.read_text(encoding="utf-8")
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    loop.run_in_executor(_executor, _run_marketing_insight, report_text, queue, loop)
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        deadline = asyncio.get_running_loop().time() + 120.0
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:

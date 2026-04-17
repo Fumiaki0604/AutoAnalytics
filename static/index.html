@@ -231,22 +231,39 @@
 
   <!-- Right: Report -->
   <div class="card">
+    <!-- タブバー（レポート到着後に表示） -->
+    <div class="tabs" id="reportTabBar" style="display:none; margin-bottom:20px;">
+      <button class="tab active" onclick="switchReportTab('report')">📊 分析レポート</button>
+      <button class="tab" onclick="switchReportTab('marketing')">📚 マーケターのアドバイス</button>
+    </div>
+
     <div class="empty-state" id="emptyState">
       <div class="icon">📊</div>
       <p>データをアップロードして分析依頼を入力すると<br>ここにレポートが表示されます</p>
     </div>
-    <div class="report-wrap" id="reportWrap">
+
+    <!-- 分析レポートパネル -->
+    <div id="reportPanel" style="display:none">
       <div class="report-actions">
         <span class="title">分析レポート</span>
         <a class="dl-btn" id="dlBtn" href="#" download>⬇ ダウンロード</a>
       </div>
       <div class="markdown" id="reportContent"></div>
     </div>
-    <div class="report-wrap" id="marketingWrap" style="display:none; margin-top:16px; border-left: 3px solid #7c3aed;">
-      <div class="report-actions">
-        <span class="title">📚 マーケティング視点からの提案</span>
+
+    <!-- マーケターのアドバイスパネル -->
+    <div id="marketingPanel" style="display:none">
+      <div id="marketingInitial" style="text-align:center; padding:40px 20px; color:var(--muted);">
+        <div style="font-size:40px; margin-bottom:12px;">📚</div>
+        <p style="margin-bottom:20px; font-size:14px;">書籍の知見をもとに、この分析に対するマーケティング視点のアドバイスを生成します。</p>
+        <button class="run-btn" id="marketingRequestBtn" onclick="requestMarketing()" style="max-width:280px; margin:0 auto;">
+          <span id="marketingBtnIcon">▶</span>
+          <span id="marketingBtnLabel">アドバイスを依頼する</span>
+        </button>
       </div>
-      <div class="markdown" id="marketingContent"></div>
+      <div id="marketingResult" style="display:none">
+        <div class="markdown" id="marketingContent"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -277,6 +294,7 @@
   // ── State ──
   let currentTab = 'csv';
   let currentUser = null;
+  let currentReportFilename = '';
 
   // ── Auth ──
   async function loadUser() {
@@ -428,9 +446,17 @@
     }
 
     // Reset UI
+    currentReportFilename = '';
     document.getElementById('emptyState').style.display = 'none';
-    document.getElementById('reportWrap').style.display = 'none';
-    document.getElementById('marketingWrap').style.display = 'none';
+    document.getElementById('reportPanel').style.display = 'none';
+    document.getElementById('reportTabBar').style.display = 'none';
+    document.getElementById('marketingInitial').style.display = '';
+    document.getElementById('marketingResult').style.display = 'none';
+    document.getElementById('marketingContent').innerHTML = '';
+    document.getElementById('marketingRequestBtn').disabled = false;
+    document.getElementById('marketingBtnIcon').textContent = '▶';
+    document.getElementById('marketingBtnLabel').textContent = 'アドバイスを依頼する';
+    switchReportTab('report');
     document.getElementById('progressCard').style.display = '';
     document.getElementById('parsedInfo').style.display = 'none';
     [1,2,3,4].forEach(n => setStep(n, 'idle', '待機中'));
@@ -483,20 +509,73 @@
       return;
     }
     if (ev.type === 'report') {
+      currentReportFilename = ev.filename;
       document.getElementById('reportContent').innerHTML = marked.parse(ev.content);
       document.getElementById('dlBtn').href = `/api/reports/${ev.filename}`;
       document.getElementById('dlBtn').setAttribute('download', ev.filename);
-      document.getElementById('reportWrap').style.display = 'block';
+      document.getElementById('reportPanel').style.display = '';
+      document.getElementById('reportTabBar').style.display = '';
       document.querySelectorAll('#reportContent pre code').forEach(el => hljs.highlightElement(el));
       injectFollowUpButtons(ev.content);
       return;
     }
-    if (ev.type === 'marketing') {
-      document.getElementById('marketingContent').innerHTML = marked.parse(ev.content);
-      document.getElementById('marketingWrap').style.display = 'block';
-      return;
-    }
     if (ev.type === 'error') alert(`分析エラー: ${ev.message}`);
+  }
+
+  // ── Report tabs ──
+  function switchReportTab(tab) {
+    document.querySelectorAll('#reportTabBar .tab').forEach((t, i) => {
+      t.classList.toggle('active', (i === 0 && tab === 'report') || (i === 1 && tab === 'marketing'));
+    });
+    document.getElementById('reportPanel').style.display = tab === 'report' ? '' : 'none';
+    document.getElementById('marketingPanel').style.display = tab === 'marketing' ? '' : 'none';
+  }
+
+  // ── Marketing on-demand ──
+  async function requestMarketing() {
+    if (!currentReportFilename) return;
+    const btn = document.getElementById('marketingRequestBtn');
+    btn.disabled = true;
+    document.getElementById('marketingBtnIcon').textContent = '⏳';
+    document.getElementById('marketingBtnLabel').textContent = '生成中...';
+
+    try {
+      const formData = new FormData();
+      formData.append('filename', currentReportFilename);
+      const res = await fetch('/api/marketing-insight', { method: 'POST', body: formData });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      document.getElementById('marketingInitial').style.display = 'none';
+      document.getElementById('marketingResult').style.display = '';
+      document.getElementById('marketingContent').innerHTML = '<p style="color:var(--muted);font-size:13px">分析中...</p>';
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const ev = JSON.parse(line.slice(6));
+          if (ev.type === 'marketing') {
+            document.getElementById('marketingContent').innerHTML = marked.parse(ev.content);
+            document.querySelectorAll('#marketingContent pre code').forEach(el => hljs.highlightElement(el));
+          }
+          if (ev.type === 'error') {
+            document.getElementById('marketingContent').innerHTML = `<p style="color:var(--error)">エラー: ${ev.message}</p>`;
+          }
+        }
+      }
+    } catch (e) {
+      document.getElementById('marketingInitial').style.display = 'none';
+      document.getElementById('marketingResult').style.display = '';
+      document.getElementById('marketingContent').innerHTML = `<p style="color:var(--error)">エラー: ${e.message}</p>`;
+    }
   }
 
   // ── Follow-up buttons ──

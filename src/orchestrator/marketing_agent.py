@@ -74,8 +74,8 @@ def generate_marketing_insight(report_text: str) -> str:
 ## 書籍からの知見
 {context}
 
-## GA4分析レポート（要約）
-{report_text[:2000]}
+## GA4分析レポート
+{report_text[:4000]}
 
 ## 指示
 - 書籍の知見をGA4データの文脈に当てはめて解釈してください
@@ -86,7 +86,7 @@ def generate_marketing_insight(report_text: str) -> str:
 
     response = _anthropic.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1000,
+        max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
