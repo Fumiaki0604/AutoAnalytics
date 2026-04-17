@@ -26,8 +26,8 @@ import anthropic
 from openai import OpenAI
 
 # --- 設定 ---
-CHUNK_SIZE = 400
-CHUNK_OVERLAP = 80
+CHUNK_SIZE = 800
+CHUNK_OVERLAP = 160
 EMBED_MODEL = "text-embedding-3-small"
 OCR_MODEL = "claude-haiku-4-5-20251001"
 
