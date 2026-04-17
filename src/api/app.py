@@ -347,7 +347,12 @@ def _run_ga4_analysis(
                 meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
             emit({"step": 1, "status": "done", "message": meta.summary()})
 
-            augmented_request = f"[データ取得期間: {start_date} 〜 {end_date}]\n{request_text}"
+            augmented_request = (
+                f"[重要: 取得データは {start_date} 〜 {end_date} の期間のみ存在する。"
+                f"SQL の WHERE 句およびレポートの期間記述はこの範囲を厳守すること。"
+                f"3月など範囲外の月を含めてはならない。]\n"
+                f"{request_text}"
+            )
             _run_shared_steps(db, augmented_request, property_id, emit, email)
     except Exception as e:
         emit({"type": "error", "message": str(e)})
