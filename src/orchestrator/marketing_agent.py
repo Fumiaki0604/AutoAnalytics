@@ -85,7 +85,7 @@ def generate_marketing_insight(report_text: str) -> str:
 
     response = _anthropic.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2000,
+        max_tokens=4000,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text

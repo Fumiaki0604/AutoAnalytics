@@ -389,7 +389,7 @@ def _run_ga4_analysis(
             augmented_request = (
                 f"[重要: 取得データは {start_date} 〜 {end_date} の期間のみ存在する。"
                 f"SQL の WHERE 句およびレポートの期間記述はこの範囲を厳守すること。"
-                f"3月など範囲外の月を含めてはならない。]\n"
+                f"この範囲外（前年同期など）のデータは存在しないため、前年比較の仮説は絶対に立てないこと。]\n"
                 f"{client_context}"
                 f"{request_text}"
             )
