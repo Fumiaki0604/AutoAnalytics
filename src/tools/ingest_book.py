@@ -5,7 +5,7 @@
     python -m src.tools.ingest_book docs/  # フォルダ内の未処理PDFをすべて処理
 
 処理フロー:
-    PDF → ページごとにPNG化 → Claude Vision OCR → チャンク分割
+    PDF → テキスト直接抽出（失敗時のみClaude Vision OCR）→ チャンク分割
     → OpenAI Embedding → Supabase marketing_docs へ保存
 """
 
@@ -143,8 +143,15 @@ def ingest_pdf(pdf_path: Path) -> None:
     total = len(doc)
 
     for page_num in range(total):
-        print(f"  ページ {page_num + 1}/{total} OCR中...", end=" ", flush=True)
-        text = _ocr_page(doc[page_num])
+        page = doc[page_num]
+        # テキスト直接抽出を試みる（300文字以上あればOCR不要）
+        direct_text = page.get_text().strip()
+        if len(direct_text) >= 300:
+            print(f"  ページ {page_num + 1}/{total} テキスト抽出...", end=" ", flush=True)
+            text = direct_text
+        else:
+            print(f"  ページ {page_num + 1}/{total} OCR中...", end=" ", flush=True)
+            text = _ocr_page(page)
 
         if text in ("（目次）", "（ページ番号のみ）") or len(text) < 30:
             print("スキップ")
