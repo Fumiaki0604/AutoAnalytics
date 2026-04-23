@@ -180,13 +180,10 @@ def _run_shared_steps(
 
 
 def _select_ga4_dimensions(request_text: str, has_comparison: bool = False) -> tuple[list[str], list[str]]:
-    """ユーザー依頼からGA4取得ディメンション・メトリクスをLLMで動的選択する。
-
-    has_comparison=True の場合、dateRange ディメンション用に1枠を確保するため最大7つに制限する。
-    """
+    """ユーザー依頼からGA4取得ディメンション・メトリクスをLLMで動的選択する。"""
     from src.adapters.ga4_adapter import DEFAULT_DIMENSIONS, DEFAULT_METRICS
     schema = _load_prompt("ga4_dimensions.md")
-    max_dims = 7 if has_comparison else 8
+    max_dims = 8
     prompt = f"""以下のGA4分析依頼に必要なディメンションとメトリクスを選択してください。
 
 ## 分析依頼
@@ -221,7 +218,7 @@ def _select_ga4_dimensions(request_text: str, has_comparison: bool = False) -> t
         if "date" not in dims:
             dims = ["date"] + dims
         return dims[:max_dims], mets[:10]
-    return DEFAULT_DIMENSIONS[:max_dims], DEFAULT_METRICS
+    return DEFAULT_DIMENSIONS, DEFAULT_METRICS
 
 
 def _fetch_drive_context(access_token: str, folder_id: str, emit: callable) -> str:

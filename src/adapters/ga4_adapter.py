@@ -95,38 +95,51 @@ class GA4Adapter:
         dims = list(dimensions or DEFAULT_DIMENSIONS)
         mets = metrics or DEFAULT_METRICS
 
-        # 複数期間指定時: dateRange ディメンションを自動追加（GA4の期間識別用）
+        # 複数期間指定時: 期間ごとに別々にAPIを叩いてdateRange列を手動付与
+        # （GA4 APIの dateRange はディメンションとして指定不可のため）
         if date_ranges and len(date_ranges) > 1:
-            api_date_ranges = [DateRange(start_date=s, end_date=e) for s, e in date_ranges]
-            if "dateRange" not in dims:
-                dims = dims[:7] + ["dateRange"]  # 8ディメンション上限を守る
+            rows = []
+            for range_idx, (range_start, range_end) in enumerate(date_ranges):
+                req = RunReportRequest(
+                    property=f"properties/{property_id}",
+                    dimensions=[Dimension(name=d) for d in dims],
+                    metrics=[Metric(name=m) for m in mets],
+                    date_ranges=[DateRange(start_date=range_start, end_date=range_end)],
+                )
+                resp = self.client.run_report(req)
+                for row in resp.rows:
+                    record: dict = {}
+                    for i, dim in enumerate(dims):
+                        record[dim] = row.dimension_values[i].value
+                    for i, met in enumerate(mets):
+                        val = row.metric_values[i].value
+                        try:
+                            record[met] = float(val) if "." in val else int(val)
+                        except (ValueError, TypeError):
+                            record[met] = val
+                    record["dateRange"] = f"date_range_{range_idx}"
+                    rows.append(record)
         else:
-            api_date_ranges = [DateRange(start_date=start_date, end_date=end_date)]
             date_ranges = None  # 単一期間はNoneに統一
-
-        request = RunReportRequest(
-            property=f"properties/{property_id}",
-            dimensions=[Dimension(name=d) for d in dims],
-            metrics=[Metric(name=m) for m in mets],
-            date_ranges=api_date_ranges,
-        )
-
-        response = self.client.run_report(request)
-
-        # レスポンスを行リストに変換
-        rows = []
-        for row in response.rows:
-            record: dict = {}
-            for i, dim in enumerate(dims):
-                record[dim] = row.dimension_values[i].value
-            for i, met in enumerate(mets):
-                val = row.metric_values[i].value
-                # 数値に変換できるものは変換
-                try:
-                    record[met] = float(val) if "." in val else int(val)
-                except (ValueError, TypeError):
-                    record[met] = val
-            rows.append(record)
+            request = RunReportRequest(
+                property=f"properties/{property_id}",
+                dimensions=[Dimension(name=d) for d in dims],
+                metrics=[Metric(name=m) for m in mets],
+                date_ranges=[DateRange(start_date=start_date, end_date=end_date)],
+            )
+            response = self.client.run_report(request)
+            rows = []
+            for row in response.rows:
+                record = {}
+                for i, dim in enumerate(dims):
+                    record[dim] = row.dimension_values[i].value
+                for i, met in enumerate(mets):
+                    val = row.metric_values[i].value
+                    try:
+                        record[met] = float(val) if "." in val else int(val)
+                    except (ValueError, TypeError):
+                        record[met] = val
+                rows.append(record)
 
         if not rows:
             raise ValueError(
