@@ -582,11 +582,8 @@ def _run_marketing_insight(
 
 
 @app.post("/api/marketing-insight")
-async def marketing_insight_api(filename: str = Form(...)) -> StreamingResponse:
-    path = REPORTS_DIR / filename
-    if not path.exists() or not path.is_file():
-        raise HTTPException(status_code=404, detail="レポートが見つかりません")
-    report_text = path.read_text(encoding="utf-8")
+async def marketing_insight_api(report_content: str = Form(...)) -> StreamingResponse:
+    report_text = report_content
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()

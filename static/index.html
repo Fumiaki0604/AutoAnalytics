@@ -300,6 +300,7 @@
   let currentTab = 'csv';
   let currentUser = null;
   let currentReportFilename = '';
+  let currentReportContent = '';
 
   // ── Auth ──
   async function loadUser() {
@@ -538,6 +539,7 @@
     }
     if (ev.type === 'report') {
       currentReportFilename = ev.filename;
+      currentReportContent = ev.content;
       document.getElementById('reportContent').innerHTML = marked.parse(ev.content);
       document.getElementById('dlBtn').href = `/api/reports/${ev.filename}`;
       document.getElementById('dlBtn').setAttribute('download', ev.filename);
@@ -561,7 +563,7 @@
 
   // ── Marketing on-demand ──
   async function requestMarketing() {
-    if (!currentReportFilename) return;
+    if (!currentReportContent) return;
     const btn = document.getElementById('marketingRequestBtn');
     btn.disabled = true;
     document.getElementById('marketingBtnIcon').textContent = '⏳';
@@ -569,7 +571,7 @@
 
     try {
       const formData = new FormData();
-      formData.append('filename', currentReportFilename);
+      formData.append('report_content', currentReportContent);
       const res = await fetch('/api/marketing-insight', { method: 'POST', body: formData });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
