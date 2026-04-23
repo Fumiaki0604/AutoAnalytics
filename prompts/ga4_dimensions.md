@@ -16,35 +16,81 @@
 | イベントのメディア | `medium` | コンバージョンイベント時点のメディア |
 
 > **注意**: ユーザーが「参照元/メディア」と言った場合は `sessionSourceMedium` を使うこと。
-> 「source / medium」「sourceMedium」「referrer」などの名称は存在しないか別の意味を持つ。
 
-## 取得済みカラム（ga4_dataテーブルに存在するもの）
+---
 
-現在のデフォルト取得ディメンション：
-- `date` - 日付（YYYY-MM-DD形式）
-- `sessionDefaultChannelGroup` - チャネルグループ
-- `sessionSourceMedium` - 参照元/メディア（セッション）
-- `sessionSource` - 参照元（セッション）
-- `sessionMedium` - メディア（セッション）
-- `deviceCategory` - デバイス種別（desktop/mobile/tablet）
-- `landingPage` - ランディングページパス
+## 選択可能なディメンション一覧（最大8つまで選択、dateは常に含む）
 
-現在のデフォルト取得メトリクス：
-- `sessions` - セッション数
-- `conversions` - コンバージョン数
-- `totalRevenue` - 売上
-- `bounceRate` - 直帰率
-- `averageSessionDuration` - 平均セッション時間（秒）
-- `newUsers` - 新規ユーザー数
+### 時間・日付
+- `date` — 日付（常に含める）
+- `year` — 年
+- `month` — 月（YYYYMM形式）
+- `week` — 週番号
+- `dayOfWeek` — 曜日（0=日曜）
+- `hour` — 時間帯
 
-## その他主要ディメンション（デフォルト未取得・参考）
+### チャネル・参照元
+- `sessionDefaultChannelGroup` — チャネルグループ（Organic Search/Direct/Referral等）
+- `sessionSourceMedium` — 参照元/メディア（セッション）★よく使う
+- `sessionSource` — 参照元（セッション）
+- `sessionMedium` — メディア（セッション）
+- `sessionCampaignName` — キャンペーン名（UTM）
+- `firstUserSourceMedium` — 初回獲得参照元/メディア
+- `firstUserDefaultChannelGroup` — 初回獲得チャネル
 
-- `pagePath` - ページパス
-- `pageTitle` - ページタイトル
-- `country` - 国
-- `city` - 都市
-- `platform` - プラットフォーム（web/android/ios）
-- `operatingSystem` - OS
-- `browser` - ブラウザ
-- `sessionCampaignName` - キャンペーン名
-- `eventName` - イベント名
+### デバイス・環境
+- `deviceCategory` — デバイス種別（desktop/mobile/tablet）
+- `operatingSystem` — OS（iOS/Android/Windows等）
+- `browser` — ブラウザ
+- `platform` — プラットフォーム（web/android/ios）
+- `mobileDeviceModel` — 端末モデル
+
+### ページ・コンテンツ
+- `pagePath` — ページパス（/products/123等）
+- `pageTitle` — ページタイトル
+- `landingPage` — ランディングページ（最初に訪問したページ）
+- `pagePathPlusQueryString` — クエリパラメータ付きパス
+
+### ユーザー・地域
+- `country` — 国
+- `city` — 都市
+- `region` — 地域
+- `newVsReturning` — 新規/リピーター（new/returning）
+- `userAgeBracket` — 年齢層
+- `userGender` — 性別
+
+### イベント・コンバージョン
+- `eventName` — イベント名
+- `isConversionEvent` — コンバージョンイベントかどうか
+
+---
+
+## 選択可能なメトリクス一覧（最大10個まで選択）
+
+### セッション・ユーザー
+- `sessions` — セッション数★
+- `totalUsers` — 総ユーザー数
+- `activeUsers` — アクティブユーザー数
+- `newUsers` — 新規ユーザー数★
+- `returningUsers` — リピーターユーザー数
+
+### エンゲージメント
+- `bounceRate` — 直帰率★
+- `engagementRate` — エンゲージメント率
+- `engagedSessions` — エンゲージセッション数
+- `averageSessionDuration` — 平均セッション時間（秒）★
+- `screenPageViews` — ページビュー数
+- `screenPageViewsPerSession` — セッションあたりPV数
+
+### コンバージョン・売上
+- `conversions` — コンバージョン数★
+- `totalRevenue` — 総売上★
+- `purchaseRevenue` — 購入売上
+- `ecommercePurchases` — 購入件数
+- `addToCarts` — カート追加数
+- `checkouts` — チェックアウト数
+- `cartToViewRate` — カート追加率
+
+### イベント
+- `eventCount` — イベント発生数
+- `eventCountPerUser` — ユーザーあたりイベント数

@@ -177,6 +177,47 @@ def _run_shared_steps(
 
 
 
+def _select_ga4_dimensions(request_text: str) -> tuple[list[str], list[str]]:
+    """ユーザー依頼からGA4取得ディメンション・メトリクスをLLMで動的選択する。"""
+    from src.adapters.ga4_adapter import DEFAULT_DIMENSIONS, DEFAULT_METRICS
+    schema = _load_prompt("ga4_dimensions.md")
+    prompt = f"""以下のGA4分析依頼に必要なディメンションとメトリクスを選択してください。
+
+## 分析依頼
+{request_text}
+
+## 選択ルール
+- ディメンション: dateを必ず含め、依頼に関連するものを最大8つ選ぶ
+- メトリクス: 依頼に関連するものを最大10個選ぶ
+- 余計なものは含めない（APIコスト削減のため）
+
+## 利用可能なディメンション・メトリクス
+{schema}
+
+## 出力形式（JSONのみ、説明不要）
+{{"dimensions": ["date", "sessionSourceMedium", ...], "metrics": ["sessions", ...]}}
+"""
+    client = anthropic.Anthropic()
+    res = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=300,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = res.content[0].text.strip()
+    # JSON部分を抽出
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start >= 0 and end > start:
+        data = json.loads(text[start:end])
+        dims = data.get("dimensions", DEFAULT_DIMENSIONS)
+        mets = data.get("metrics", DEFAULT_METRICS)
+        # dateは必ず含める
+        if "date" not in dims:
+            dims = ["date"] + dims
+        return dims[:8], mets[:10]
+    return DEFAULT_DIMENSIONS, DEFAULT_METRICS
+
+
 def _fetch_drive_context(access_token: str, folder_id: str, emit: callable) -> str:
     """Drive フォルダから最新議事録を取得してコンテキスト文字列を返す。失敗時は空文字列。"""
     if not access_token or not folder_id:
@@ -370,15 +411,20 @@ def _run_ga4_analysis(
         with DuckDBClient(db_path) as db:
             # Step 1: GA4 データ取得（トークンリフレッシュ対応）
             emit({"step": 1, "status": "running", "message": "GA4 からデータを取得中..."})
+            dims, mets = _select_ga4_dimensions(request_text)
             try:
-                meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
+                meta = GA4Adapter(db, access_token).load(
+                    property_id, start_date, end_date, dimensions=dims, metrics=mets
+                )
             except Exception:
                 if not refresh_token:
                     raise
                 access_token = refresh_access_token(refresh_token)
                 if session_id:
                     update_access_token(session_id, access_token)
-                meta = GA4Adapter(db, access_token).load(property_id, start_date, end_date)
+                meta = GA4Adapter(db, access_token).load(
+                    property_id, start_date, end_date, dimensions=dims, metrics=mets
+                )
             emit({"step": 1, "status": "done", "message": meta.summary()})
 
             # Drive: property_id と同名フォルダを自動検索
