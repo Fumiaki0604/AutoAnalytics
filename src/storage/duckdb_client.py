@@ -17,6 +17,7 @@ class DuckDBClient:
 
     def __init__(self, db_path: str = "data/analytics.duckdb") -> None:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self.db_path = db_path
         self.conn = duckdb.connect(db_path)
 
     # ------------------------------------------------------------------

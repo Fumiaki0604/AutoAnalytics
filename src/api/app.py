@@ -6,7 +6,8 @@ import json
 import tempfile
 import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+import duckdb
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
@@ -81,6 +82,46 @@ def _data_context(db: DuckDBClient, table: str) -> str:
         return f"データコンテキスト取得失敗: {e}"
 
 
+def _run_hypothesis(
+    h,
+    db_path: str,
+    allowed_tables: list[str],
+    email: str,
+    source_id: str,
+) -> None:
+    """1つの仮説のSQLを独立したDuckDB接続で実行する（並列実行用）。"""
+    if not h.sql:
+        h.result, h.status = "（SQL なし）", "no_sql"
+        return
+    try:
+        conn = duckdb.connect(db_path, read_only=True)
+        try:
+            validated_sql = validate_and_sanitize(h.sql, allowed_tables)
+            result = conn.execute(validated_sql)
+            columns = [desc[0] for desc in result.description]
+            rows = [dict(zip(columns, row)) for row in result.fetchall()]
+            h.result = _fmt_result(rows) if rows else "（該当データなし）"
+            h.status = "supported" if rows else "no_data"
+        except SQLValidationError as e:
+            h.result, h.status = f"SQL バリデーションエラー: {e}", "error"
+            if email:
+                try:
+                    save_correction(email, source_id, "sql_validation", h.sql[:300], str(e))
+                except Exception:
+                    pass
+        except Exception as e:
+            h.result, h.status = f"SQL 実行エラー: {e}", "error"
+            if email:
+                try:
+                    save_correction(email, source_id, "sql_execution", h.sql[:300], str(e))
+                except Exception:
+                    pass
+        finally:
+            conn.close()
+    except Exception as e:
+        h.result, h.status = f"DB接続エラー: {e}", "error"
+
+
 def _fmt_result(rows: list[dict], max_rows: int = 10) -> str:
     if not rows:
         return "（結果なし）"
@@ -136,29 +177,25 @@ def _run_shared_steps(
     ).generate(parsed, context, past_context, corrections_context)
 
     allowed_tables = db.list_tables()
-    for h in hypotheses:
-        emit({"step": 3, "status": "running", "message": f"仮説 {h.index} を検証中: {h.title[:40]}..."})
-        if not h.sql:
-            h.result, h.status = "（SQL なし）", "no_sql"
-            continue
-        try:
-            rows = db.query(validate_and_sanitize(h.sql, allowed_tables))
-            h.result = _fmt_result(rows) if rows else "（該当データなし）"
-            h.status = "supported" if rows else "no_data"
-        except SQLValidationError as e:
-            h.result, h.status = f"SQL バリデーションエラー: {e}", "error"
-            if email:
-                try:
-                    save_correction(email, source_id, "sql_validation", h.sql[:300], str(e))
-                except Exception:
-                    pass
-        except Exception as e:
-            h.result, h.status = f"SQL 実行エラー: {e}", "error"
-            if email:
-                try:
-                    save_correction(email, source_id, "sql_execution", h.sql[:300], str(e))
-                except Exception:
-                    pass
+    # 仮説SQLを並列実行（各仮説が独立したDuckDB read-onlyコネクションを使用）
+    emit({"step": 3, "status": "running", "message": f"{len(hypotheses)} つの仮説を並列検証中..."})
+    completed = 0
+    with ThreadPoolExecutor(max_workers=min(len(hypotheses), 4)) as pool:
+        future_to_h = {
+            pool.submit(_run_hypothesis, h, db.db_path, allowed_tables, email, source_id): h
+            for h in hypotheses
+        }
+        for future in as_completed(future_to_h):
+            h = future_to_h[future]
+            completed += 1
+            try:
+                future.result()
+            except Exception as e:
+                h.result, h.status = f"実行エラー: {e}", "error"
+            emit({
+                "step": 3, "status": "running",
+                "message": f"仮説 {h.index} 検証完了 ({completed}/{len(hypotheses)}): {h.title[:30]}",
+            })
 
     emit({"step": 3, "status": "done", "message": f"{len(hypotheses)} つの仮説を検証完了"})
 

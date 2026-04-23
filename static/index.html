@@ -684,8 +684,12 @@
       currentReportFilename = ev.filename;
       currentReportContent = ev.content;
       document.getElementById('reportContent').innerHTML = marked.parse(ev.content);
-      document.getElementById('dlBtn').href = `/api/reports/${ev.filename}`;
-      document.getElementById('dlBtn').setAttribute('download', ev.filename);
+      // Blob URLでダウンロード（サーバーファイルシステム不要）
+      const _blob = new Blob([ev.content], { type: 'text/markdown; charset=utf-8' });
+      const _blobUrl = URL.createObjectURL(_blob);
+      const dlBtn = document.getElementById('dlBtn');
+      dlBtn.href = _blobUrl;
+      dlBtn.setAttribute('download', ev.filename);
       document.getElementById('reportPanel').style.display = '';
       document.getElementById('reportTabBar').style.display = '';
       document.querySelectorAll('#reportContent pre code').forEach(el => hljs.highlightElement(el));
