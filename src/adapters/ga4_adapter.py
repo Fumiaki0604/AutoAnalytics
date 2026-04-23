@@ -44,8 +44,16 @@ class GA4LoadResult:
     rows: int
     columns: list[str]
     date_range: tuple[str, str]
+    date_ranges: Optional[list[tuple[str, str]]] = None  # 複数期間指定時
 
     def summary(self) -> str:
+        if self.date_ranges and len(self.date_ranges) > 1:
+            periods = " / ".join(f"{s} 〜 {e}" for s, e in self.date_ranges)
+            return (
+                f"GA4 プロパティ {self.property_id} から {self.rows:,} 行取得 "
+                f"（{periods}）"
+                f" → テーブル '{self.table}'"
+            )
         return (
             f"GA4 プロパティ {self.property_id} から {self.rows:,} 行取得 "
             f"（{self.date_range[0]} 〜 {self.date_range[1]}）"
@@ -68,28 +76,39 @@ class GA4Adapter:
     def load(
         self,
         property_id: str,
-        start_date: str,
-        end_date: str,
+        start_date: str = "",
+        end_date: str = "",
         table_name: str = "ga4_data",
         dimensions: Optional[list[str]] = None,
         metrics: Optional[list[str]] = None,
+        date_ranges: Optional[list[tuple[str, str]]] = None,
     ) -> GA4LoadResult:
         """GA4 からデータを取得して DuckDB テーブルを作成する。
 
         Args:
             property_id: GA4 プロパティ ID（例: "123456789"）
-            start_date: 開始日（例: "2026-03-01" or "30daysAgo"）
-            end_date: 終了日（例: "2026-04-10" or "yesterday"）
+            start_date: 開始日（単一期間時）
+            end_date: 終了日（単一期間時）
             table_name: 作成する DuckDB テーブル名
+            date_ranges: 複数期間指定時 [(start1, end1), (start2, end2)]。指定時は start_date/end_date より優先。
         """
-        dims = dimensions or DEFAULT_DIMENSIONS
+        dims = list(dimensions or DEFAULT_DIMENSIONS)
         mets = metrics or DEFAULT_METRICS
+
+        # 複数期間指定時: dateRange ディメンションを自動追加（GA4の期間識別用）
+        if date_ranges and len(date_ranges) > 1:
+            api_date_ranges = [DateRange(start_date=s, end_date=e) for s, e in date_ranges]
+            if "dateRange" not in dims:
+                dims = dims[:7] + ["dateRange"]  # 8ディメンション上限を守る
+        else:
+            api_date_ranges = [DateRange(start_date=start_date, end_date=end_date)]
+            date_ranges = None  # 単一期間はNoneに統一
 
         request = RunReportRequest(
             property=f"properties/{property_id}",
             dimensions=[Dimension(name=d) for d in dims],
             metrics=[Metric(name=m) for m in mets],
-            date_ranges=[DateRange(start_date=start_date, end_date=end_date)],
+            date_ranges=api_date_ranges,
         )
 
         response = self.client.run_report(request)
@@ -123,10 +142,12 @@ class GA4Adapter:
         )
 
         columns = list(df.columns)
+        primary_range = date_ranges[0] if date_ranges else (start_date, end_date)
         return GA4LoadResult(
             table=table_name,
             property_id=property_id,
             rows=len(df),
             columns=columns,
-            date_range=(start_date, end_date),
+            date_range=primary_range,
+            date_ranges=date_ranges,
         )

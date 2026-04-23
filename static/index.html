@@ -205,6 +205,24 @@
               <input type="date" id="endDate" />
             </div>
           </div>
+          <label style="display:flex;align-items:center;gap:6px;margin-top:12px;cursor:pointer;font-weight:500">
+            <input type="checkbox" id="compToggle" onchange="toggleCompPeriod()" style="width:auto;margin:0;cursor:pointer" />
+            <span>比較期間を追加する</span>
+          </label>
+          <div id="compPeriodSection" style="display:none;margin-top:4px">
+            <div style="font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:7px 10px;margin-bottom:8px">
+              ⚡ 指定した2期間のみ取得（10,000行を効率的に使用）
+            </div>
+            <label style="margin-top:0">比較期間</label>
+            <div class="date-row">
+              <div>
+                <input type="date" id="compStartDate" />
+              </div>
+              <div>
+                <input type="date" id="compEndDate" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -405,6 +423,11 @@
     sel.innerHTML = '<option value="">ログインするとプロパティが表示されます</option>';
   }
 
+  function toggleCompPeriod() {
+    const checked = document.getElementById('compToggle').checked;
+    document.getElementById('compPeriodSection').style.display = checked ? '' : 'none';
+  }
+
   // ── Tabs ──
   function switchTab(tab) {
     currentTab = tab;
@@ -471,6 +494,15 @@
       formData.append('start_date', startDate);
       formData.append('end_date', endDate);
       formData.append('request_text', request);
+      // 比較期間
+      const compToggle = document.getElementById('compToggle');
+      if (compToggle && compToggle.checked) {
+        const compStart = document.getElementById('compStartDate').value;
+        const compEnd   = document.getElementById('compEndDate').value;
+        if (!compStart || !compEnd) { alert('比較期間の開始日・終了日を両方入力してください'); return; }
+        formData.append('comp_start_date', compStart);
+        formData.append('comp_end_date', compEnd);
+      }
       fetchPromise = fetch('/api/analyze/ga4', { method: 'POST', body: formData });
     }
 

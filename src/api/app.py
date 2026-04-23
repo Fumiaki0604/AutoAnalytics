@@ -177,17 +177,21 @@ def _run_shared_steps(
 
 
 
-def _select_ga4_dimensions(request_text: str) -> tuple[list[str], list[str]]:
-    """ユーザー依頼からGA4取得ディメンション・メトリクスをLLMで動的選択する。"""
+def _select_ga4_dimensions(request_text: str, has_comparison: bool = False) -> tuple[list[str], list[str]]:
+    """ユーザー依頼からGA4取得ディメンション・メトリクスをLLMで動的選択する。
+
+    has_comparison=True の場合、dateRange ディメンション用に1枠を確保するため最大7つに制限する。
+    """
     from src.adapters.ga4_adapter import DEFAULT_DIMENSIONS, DEFAULT_METRICS
     schema = _load_prompt("ga4_dimensions.md")
+    max_dims = 7 if has_comparison else 8
     prompt = f"""以下のGA4分析依頼に必要なディメンションとメトリクスを選択してください。
 
 ## 分析依頼
 {request_text}
 
 ## 選択ルール
-- ディメンション: dateを必ず含め、依頼に関連するものを最大8つ選ぶ
+- ディメンション: dateを必ず含め、依頼に関連するものを最大{max_dims}つ選ぶ（dateRangeは含めない）
 - メトリクス: 依頼に関連するものを最大10個選ぶ
 - 余計なものは含めない（APIコスト削減のため）
 
@@ -214,8 +218,8 @@ def _select_ga4_dimensions(request_text: str) -> tuple[list[str], list[str]]:
         # dateは必ず含める
         if "date" not in dims:
             dims = ["date"] + dims
-        return dims[:8], mets[:10]
-    return DEFAULT_DIMENSIONS, DEFAULT_METRICS
+        return dims[:max_dims], mets[:10]
+    return DEFAULT_DIMENSIONS[:max_dims], DEFAULT_METRICS
 
 
 def _fetch_drive_context(access_token: str, folder_id: str, emit: callable) -> str:
@@ -402,6 +406,8 @@ def _run_ga4_analysis(
     email: str = "",
     refresh_token: str = "",
     session_id: str = "",
+    comp_start_date: str = "",
+    comp_end_date: str = "",
 ) -> None:
     def emit(event: dict) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
@@ -409,12 +415,20 @@ def _run_ga4_analysis(
     db_path = str(DATA_DIR / f"session_{uuid.uuid4().hex}.duckdb")
     try:
         with DuckDBClient(db_path) as db:
+            # 比較期間の有無を判定
+            has_comparison = bool(comp_start_date and comp_end_date)
+            date_ranges = (
+                [(start_date, end_date), (comp_start_date, comp_end_date)]
+                if has_comparison else None
+            )
+
             # Step 1: GA4 データ取得（トークンリフレッシュ対応）
             emit({"step": 1, "status": "running", "message": "GA4 からデータを取得中..."})
-            dims, mets = _select_ga4_dimensions(request_text)
+            dims, mets = _select_ga4_dimensions(request_text, has_comparison=has_comparison)
             try:
                 meta = GA4Adapter(db, access_token).load(
-                    property_id, start_date, end_date, dimensions=dims, metrics=mets
+                    property_id, start_date, end_date,
+                    dimensions=dims, metrics=mets, date_ranges=date_ranges,
                 )
             except Exception:
                 if not refresh_token:
@@ -423,7 +437,8 @@ def _run_ga4_analysis(
                 if session_id:
                     update_access_token(session_id, access_token)
                 meta = GA4Adapter(db, access_token).load(
-                    property_id, start_date, end_date, dimensions=dims, metrics=mets
+                    property_id, start_date, end_date,
+                    dimensions=dims, metrics=mets, date_ranges=date_ranges,
                 )
             emit({"step": 1, "status": "done", "message": meta.summary()})
 
@@ -435,20 +450,39 @@ def _run_ga4_analysis(
                 pass
             client_context = _fetch_drive_context(access_token, drive_folder_id, emit)
 
+            # meta.columns = 実際に取得したカラム全体（dateRange含む可能性あり）
+            dim_cols = [c for c in meta.columns if c not in mets]
             fetched_cols = (
                 f"[GA4取得カラム情報]\n"
-                f"ディメンション: {', '.join(dims)}\n"
+                f"ディメンション: {', '.join(dim_cols)}\n"
                 f"メトリクス: {', '.join(mets)}\n"
                 f"※ SQLで使えるカラム名はテーブルスキーマに記載されたものだけを使うこと。\n"
             )
-            augmented_request = (
-                f"[重要: 取得データは {start_date} 〜 {end_date} の期間のみ存在する。"
-                f"SQL の WHERE 句およびレポートの期間記述はこの範囲を厳守すること。"
-                f"この範囲外（前年同期など）のデータは存在しないため、前年比較の仮説は絶対に立てないこと。]\n\n"
-                f"{fetched_cols}\n"
-                f"{client_context}"
-                f"{request_text}"
-            )
+
+            if has_comparison:
+                # 比較期間モード: dateRange列で期間を区別できる
+                period_desc = (
+                    f"date_range_0 = {start_date} 〜 {end_date}（比較元）、"
+                    f"date_range_1 = {comp_start_date} 〜 {comp_end_date}（比較先）"
+                )
+                augmented_request = (
+                    f"[重要: データには2つの期間が含まれる。{period_desc}。"
+                    f"dateRange列の値で期間を区別できる（date_range_0 / date_range_1）。"
+                    f"期間比較の仮説を立てる場合は dateRange列を使って GROUP BY またはフィルタすること。"
+                    f"この2期間以外のデータは存在しない。]\n\n"
+                    f"{fetched_cols}\n"
+                    f"{client_context}"
+                    f"{request_text}"
+                )
+            else:
+                augmented_request = (
+                    f"[重要: 取得データは {start_date} 〜 {end_date} の期間のみ存在する。"
+                    f"SQL の WHERE 句およびレポートの期間記述はこの範囲を厳守すること。"
+                    f"この範囲外（前年同期など）のデータは存在しないため、前年比較の仮説は絶対に立てないこと。]\n\n"
+                    f"{fetched_cols}\n"
+                    f"{client_context}"
+                    f"{request_text}"
+                )
             _run_shared_steps(db, augmented_request, property_id, emit, email)
     except Exception as e:
         emit({"type": "error", "message": str(e)})
@@ -502,6 +536,8 @@ async def analyze_ga4(
     start_date: str = Form(...),
     end_date: str = Form(...),
     request_text: str = Form(...),
+    comp_start_date: str = Form(default=""),
+    comp_end_date: str = Form(default=""),
     session_id: str = Cookie(default=""),
 ) -> StreamingResponse:
     session = get_session(session_id)
@@ -519,7 +555,7 @@ async def analyze_ga4(
     loop.run_in_executor(
         _executor, _run_ga4_analysis,
         property_id, start_date, end_date, request_text, access_token, queue, loop, email,
-        refresh_token, session_id,
+        refresh_token, session_id, comp_start_date, comp_end_date,
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
