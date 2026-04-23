@@ -605,7 +605,10 @@
       const formData = new FormData();
       formData.append('report_content', currentReportContent);
       const res = await fetch('/api/marketing-insight', { method: 'POST', body: formData });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.detail || `HTTP ${res.status}`);
+      }
 
       document.getElementById('marketingInitial').style.display = 'none';
       document.getElementById('marketingResult').style.display = '';

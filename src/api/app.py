@@ -674,8 +674,18 @@ def _run_marketing_insight(
 
 
 @app.post("/api/marketing-insight")
-async def marketing_insight_api(report_content: str = Form(...)) -> StreamingResponse:
+async def marketing_insight_api(
+    report_content: str = Form(default=""),
+    filename: str = Form(default=""),  # 旧バージョン互換
+) -> StreamingResponse:
     report_text = report_content
+    # 旧フロントエンド互換: report_content が空で filename が渡された場合はファイルから読む
+    if not report_text and filename:
+        report_path = REPORTS_DIR / filename
+        if report_path.exists():
+            report_text = report_path.read_text(encoding="utf-8")
+    if not report_text:
+        raise HTTPException(status_code=400, detail="レポート内容が空です。先に分析を実行してください。")
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
