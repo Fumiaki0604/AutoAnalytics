@@ -16,9 +16,13 @@ from src.storage.duckdb_client import DuckDBClient
 
 
 # デフォルトで取得するディメンション・指標
+# GA4 API は1リクエストで最大9ディメンション・10メトリクスまで
 DEFAULT_DIMENSIONS = [
     "date",
     "sessionDefaultChannelGroup",
+    "sessionSourceMedium",   # 参照元/メディア（セッション）
+    "sessionSource",         # 参照元（セッション）
+    "sessionMedium",         # メディア（セッション）
     "deviceCategory",
     "landingPage",
 ]
