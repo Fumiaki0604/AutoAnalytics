@@ -435,12 +435,17 @@ def _run_ga4_analysis(
                 pass
             client_context = _fetch_drive_context(access_token, drive_folder_id, emit)
 
-            ga4_schema = _load_prompt("ga4_dimensions.md")
+            fetched_cols = (
+                f"[GA4取得カラム情報]\n"
+                f"ディメンション: {', '.join(dims)}\n"
+                f"メトリクス: {', '.join(mets)}\n"
+                f"※ SQLで使えるカラム名はテーブルスキーマに記載されたものだけを使うこと。\n"
+            )
             augmented_request = (
                 f"[重要: 取得データは {start_date} 〜 {end_date} の期間のみ存在する。"
                 f"SQL の WHERE 句およびレポートの期間記述はこの範囲を厳守すること。"
                 f"この範囲外（前年同期など）のデータは存在しないため、前年比較の仮説は絶対に立てないこと。]\n\n"
-                f"{ga4_schema}\n\n"
+                f"{fetched_cols}\n"
                 f"{client_context}"
                 f"{request_text}"
             )
