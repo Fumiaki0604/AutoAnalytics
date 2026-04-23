@@ -4,7 +4,7 @@
 
 {past_context}
 
-過去の発見がある場合は、「前回〜だったが今回は〜」という継続的な視点で仮説を立ててください。
+過去の発見は**参考情報**として扱い、今回のデータで改めて検証してください。過去の発見が今回のデータと一致しない場合は、今回のデータを優先してください。過去の発見を前提条件として固定しないこと。
 
 ## 過去のSQLエラー履歴
 
@@ -38,7 +38,6 @@
 3. **カラム名は「スキーマ」に記載されたものだけを使うこと。** 存在しないカラムを参照してはならない。
 4. **DuckDB 構文を使うこと。** `STRFTIME` ではなく `STRPTIME` / `DATE_TRUNC` / `date_part` を使う。
 5. SQL が長くなる場合は CTE（WITH 句）で読みやすく書くこと。
-7. **季節性・年度変動が疑われる場合は、前年同期比を検証する仮説を必ず1本含めること。** データが取得できない場合は、仮説の説明欄にその理由（例: データ期間が1年未満、権限なし等）を明記すること。
 6. **CTE 名に DuckDB 予約語を使ってはならない。** 以下の名称は使用禁止。代わりに `_data` や `_result` を末尾に付けた名称を使うこと。
    - 禁止: `pivot`, `unpivot`, `rank`, `ranked`, `sample`, `filter`, `exclude`, `values`, `table`, `index`, `group`, `order`, `select`, `from`, `where`, `join`, `on`, `as`, `by`, `with`
    - 例: `pivot` → `channel_pivot_data`、`ranked` → `ranked_pages`、`monthly_device` → `device_monthly_data`

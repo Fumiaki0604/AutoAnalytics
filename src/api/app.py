@@ -163,10 +163,13 @@ def _run_shared_steps(
 
     if email:
         findings, actions = ReportGenerator.extract_summary_and_actions(report)
-        try:
-            save_memory(email, source_id, parsed.kpi, parsed.summary, findings, actions)
-        except Exception:
-            pass
+        # 仮説が1件以上 supported の場合のみメモリ保存（失敗分析を誤学習しない）
+        supported_count = sum(1 for h in hypotheses if h.status == "supported")
+        if supported_count >= 1:
+            try:
+                save_memory(email, source_id, parsed.kpi, parsed.summary, findings, actions)
+            except Exception:
+                pass
         eval_compute_and_save(email, source_id, hypotheses, report)
 
     emit({"step": 4, "status": "done", "message": "レポート生成完了"})
