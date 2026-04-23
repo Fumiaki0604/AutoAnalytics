@@ -62,6 +62,29 @@
     .review-btn { background: #3730a3; color: #fff; border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; margin-right: 8px; }
     .review-btn:hover { background: #4f46e5; }
 
+    /* Supplement modal */
+    .supp-modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 200; align-items: center; justify-content: center; }
+    .supp-modal-overlay.open { display: flex; }
+    .supp-modal { background: var(--surface); border-radius: var(--radius); box-shadow: 0 8px 40px rgba(0,0,0,.25); width: min(520px, 90vw); }
+    .supp-modal-header { padding: 18px 20px 12px; border-bottom: 1px solid var(--border); }
+    .supp-modal-header h3 { font-size: 15px; font-weight: 700; }
+    .supp-modal-body { padding: 18px 20px; }
+    .supp-reason { font-size: 13px; color: var(--text); background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+    .supp-reason strong { display: block; margin-bottom: 4px; color: #92400e; }
+    .supp-drop { border: 2px dashed var(--border); border-radius: 8px; padding: 24px 16px; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; position: relative; margin-bottom: 14px; }
+    .supp-drop:hover { border-color: var(--accent); background: #eef2ff; }
+    .supp-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .supp-drop-hint { font-size: 13px; color: var(--muted); }
+    .supp-drop-hint strong { color: var(--accent); }
+    .supp-file-name { font-size: 13px; font-weight: 600; color: var(--success); margin-top: 6px; display: none; }
+    .supp-drive-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+    .supp-drive-row label { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+    .supp-drive-row select { flex: 1; font-size: 13px; }
+    .supp-actions { display: flex; gap: 10px; }
+    .supp-upload-btn { flex: 1; background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 11px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .supp-upload-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .supp-skip-btn { flex: 0 0 auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 11px 18px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--muted); }
+
     /* Review modal */
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; align-items: flex-start; justify-content: center; padding-top: 60px; }
     .modal-overlay.open { display: flex; }
@@ -291,6 +314,36 @@
   </div>
 </div>
 
+<!-- Supplement data modal -->
+<div class="supp-modal-overlay" id="suppModal">
+  <div class="supp-modal">
+    <div class="supp-modal-header">
+      <h3>📎 補足データのリクエスト</h3>
+    </div>
+    <div class="supp-modal-body">
+      <div class="supp-reason">
+        <strong>エージェントからのお伺い</strong>
+        <span id="suppReason">—</span>
+      </div>
+      <div class="supp-drop" id="suppDrop">
+        <input type="file" id="suppFileInput" accept=".csv,.xlsx,.xls" onchange="onSuppFileSelect()" />
+        <div class="supp-drop-hint">CSV / Excel をドラッグ＆ドロップ<br>または <strong>クリックして選択</strong></div>
+        <div class="supp-file-name" id="suppFileName"></div>
+      </div>
+      <div class="supp-drive-row">
+        <label>📁 Driveフォルダ</label>
+        <select id="suppDriveFolder">
+          <option value="">アップロード先を選択（任意）</option>
+        </select>
+      </div>
+      <div class="supp-actions">
+        <button class="supp-upload-btn" id="suppUploadBtn" onclick="submitSupplement()" disabled>アップロードして分析続行</button>
+        <button class="supp-skip-btn" onclick="skipSupplement()">スキップ</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Review modal -->
 <div class="modal-overlay" id="reviewModal" onclick="if(event.target===this)closeReview()">
   <div class="modal">
@@ -319,6 +372,8 @@
   let currentUser = null;
   let currentReportFilename = '';
   let currentReportContent = '';
+  let currentAnalysisKey = '';   // 補足データ要求中のキー
+  let suppFileBytes = null;      // 選択済み補足ファイル
 
   // ── Auth ──
   async function loadUser() {
@@ -375,13 +430,19 @@
       const res = await fetch('/api/drive/folders');
       if (!res.ok) return;
       const folders = await res.json();
+      // CSV用
       const sel = document.getElementById('csvDriveFolderId');
       sel.innerHTML = '<option value="">選択しない</option>';
+      // 補足モーダル用
+      const suppSel = document.getElementById('suppDriveFolder');
+      suppSel.innerHTML = '<option value="">アップロード先を選択（任意）</option>';
       folders.forEach(f => {
         const opt = document.createElement('option');
         opt.value = f.id;
         opt.textContent = f.name;
         sel.appendChild(opt);
+        const opt2 = opt.cloneNode(true);
+        suppSel.appendChild(opt2);
       });
       document.getElementById('csvDriveSection').style.display = '';
     } catch (e) {
@@ -426,6 +487,56 @@
   function toggleCompPeriod() {
     const checked = document.getElementById('compToggle').checked;
     document.getElementById('compPeriodSection').style.display = checked ? '' : 'none';
+  }
+
+  // ── Supplement modal ──
+  function openSuppModal(analysisKey, reason, suggestedType) {
+    currentAnalysisKey = analysisKey;
+    suppFileBytes = null;
+    document.getElementById('suppReason').textContent =
+      `${reason}（推奨データ: ${suggestedType}）`;
+    document.getElementById('suppFileName').style.display = 'none';
+    document.getElementById('suppFileName').textContent = '';
+    document.getElementById('suppFileInput').value = '';
+    document.getElementById('suppUploadBtn').disabled = true;
+    document.getElementById('suppModal').classList.add('open');
+  }
+
+  function onSuppFileSelect() {
+    const file = document.getElementById('suppFileInput').files[0];
+    if (!file) return;
+    suppFileBytes = file;
+    document.getElementById('suppFileName').textContent = `✓ ${file.name}`;
+    document.getElementById('suppFileName').style.display = 'block';
+    document.getElementById('suppUploadBtn').disabled = false;
+  }
+
+  async function submitSupplement() {
+    if (!suppFileBytes || !currentAnalysisKey) return;
+    const btn = document.getElementById('suppUploadBtn');
+    btn.disabled = true;
+    btn.textContent = '送信中...';
+    const formData = new FormData();
+    formData.append('analysis_key', currentAnalysisKey);
+    formData.append('supplement_file', suppFileBytes);
+    const driveFolderId = document.getElementById('suppDriveFolder').value;
+    if (driveFolderId) formData.append('drive_folder_id', driveFolderId);
+    try {
+      await fetch('/api/analyze/ga4/supplement', { method: 'POST', body: formData });
+    } finally {
+      document.getElementById('suppModal').classList.remove('open');
+      currentAnalysisKey = '';
+    }
+  }
+
+  async function skipSupplement() {
+    if (!currentAnalysisKey) return;
+    const formData = new FormData();
+    formData.append('analysis_key', currentAnalysisKey);
+    formData.append('skip', 'true');
+    fetch('/api/analyze/ga4/supplement', { method: 'POST', body: formData });
+    document.getElementById('suppModal').classList.remove('open');
+    currentAnalysisKey = '';
   }
 
   // ── Tabs ──
@@ -579,6 +690,14 @@
       document.getElementById('reportTabBar').style.display = '';
       document.querySelectorAll('#reportContent pre code').forEach(el => hljs.highlightElement(el));
       injectFollowUpButtons(ev.content);
+      return;
+    }
+    if (ev.type === 'needs_data') {
+      openSuppModal(ev.analysis_key, ev.reason, ev.suggested_type);
+      return;
+    }
+    if (ev.type === 'supplement_loaded') {
+      setStep(1, 'done', `データ読み込み完了 + ${ev.message}`);
       return;
     }
     if (ev.type === 'error') alert(`分析エラー: ${ev.message}`);

@@ -1,12 +1,14 @@
 """FastAPI アプリケーション。SSE でリアルタイム進捗をブラウザに送る。"""
 
 import asyncio
+import io
 import json
 import tempfile
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 import anthropic
 
@@ -19,7 +21,7 @@ from google.analytics.admin import AnalyticsAdminServiceClient
 from google.oauth2.credentials import Credentials as GoogleCredentials
 
 from src.adapters.csv_adapter import CSVAdapter
-from src.adapters.drive_adapter import find_folder_by_name, get_recent_docs_text, list_folders
+from src.adapters.drive_adapter import find_folder_by_name, get_recent_docs_text, list_folders, upload_file as drive_upload_file
 from src.adapters.ga4_adapter import GA4Adapter
 from src.auth.google_oauth import (
     build_auth_url,
@@ -50,6 +52,9 @@ from src.storage.sql_validator import SQLValidationError, validate_and_sanitize
 load_dotenv()
 
 app = FastAPI(title="AutoAnalytics")
+
+# 補足データ要求中のセッションを管理（session_key → threading.Event + 結果格納リスト）
+_paused_sessions: dict[str, dict] = {}
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -177,6 +182,56 @@ def _run_shared_steps(
     emit({"step": 4, "status": "done", "message": "レポート生成完了"})
     emit({"type": "report", "content": report, "filename": output_path.name})
 
+
+
+def _check_supplement_needed(request_text: str, schema: str) -> tuple[bool, str, str]:
+    """GA4データだけでは不足か判定し (needed, reason, suggested_type) を返す。
+
+    suggested_type 例: "売上・予算CSV", "キャンペーン情報CSV", "商品マスタExcel" など。
+    """
+    prompt = f"""以下のGA4分析依頼とGA4テーブルのスキーマを見て、
+GA4データだけでは分析を完遂できない場合に教えてください。
+
+## 分析依頼
+{request_text}
+
+## GA4テーブルのスキーマ（実際に取得済みの列）
+{schema}
+
+## 判定基準
+- GA4データ（セッション数・CVR・売上・参照元など）の範囲内で分析できる → 不要
+- 社内予算・広告費・商品マスタ・キャンペーン情報など GA4 に含まれないデータが必要 → 必要
+
+## 出力（JSONのみ）
+{{"needed": false}} または {{"needed": true, "reason": "理由（1文）", "suggested_type": "例: 広告費用CSV"}}
+"""
+    client = anthropic.Anthropic()
+    res = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=150,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = res.content[0].text.strip()
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start >= 0 and end > start:
+        data = json.loads(text[start:end])
+        if data.get("needed"):
+            return True, data.get("reason", ""), data.get("suggested_type", "補足データ")
+    return False, "", ""
+
+
+def _load_supplement_to_duckdb(db, filename: str, content: bytes) -> str:
+    """CSV/Excelをsupplement_dataテーブルとしてDuckDBに読み込む。サマリー文字列を返す。"""
+    import pandas as pd
+    suffix = Path(filename).suffix.lower()
+    if suffix in (".xlsx", ".xls"):
+        df = pd.read_excel(io.BytesIO(content))
+    else:
+        df = pd.read_csv(io.BytesIO(content))
+    db.conn.execute("CREATE OR REPLACE TABLE supplement_data AS SELECT * FROM df")
+    cols_preview = ", ".join(df.columns[:6])
+    return f"補足データ '{filename}': {len(df):,}行 × {len(df.columns)}列（{cols_preview}）"
 
 
 def _select_ga4_dimensions(request_text: str, has_comparison: bool = False) -> tuple[list[str], list[str]]:
@@ -407,6 +462,7 @@ def _run_ga4_analysis(
     session_id: str = "",
     comp_start_date: str = "",
     comp_end_date: str = "",
+    analysis_key: str = "",
 ) -> None:
     def emit(event: dict) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
@@ -458,8 +514,38 @@ def _run_ga4_analysis(
                 f"※ SQLで使えるカラム名はテーブルスキーマに記載されたものだけを使うこと。\n"
             )
 
+            # ── 補足データチェック（Step 1.5）──
+            supplement_note = ""
+            try:
+                schema_text = _data_context(db, "ga4_data")
+                needed, reason, supp_type = _check_supplement_needed(request_text, schema_text)
+                if needed and analysis_key:
+                    ev = threading.Event()
+                    result_holder: list = [None]
+                    _paused_sessions[analysis_key] = {"event": ev, "result": result_holder}
+                    emit({
+                        "type": "needs_data",
+                        "analysis_key": analysis_key,
+                        "reason": reason,
+                        "suggested_type": supp_type,
+                    })
+                    # 最大120秒待機（スキップ or ファイル受信）
+                    ev.wait(timeout=120.0)
+                    _paused_sessions.pop(analysis_key, None)
+
+                    supp = result_holder[0]  # None=スキップ, dict=ファイル情報
+                    if supp:
+                        summary = _load_supplement_to_duckdb(db, supp["filename"], supp["content"])
+                        supplement_note = (
+                            f"\n\n[補足データ利用可能]\n"
+                            f"supplement_data テーブルとして読み込み済み: {summary}\n"
+                            f"必要に応じて ga4_data と JOIN して分析すること。\n"
+                        )
+                        emit({"type": "supplement_loaded", "message": summary})
+            except Exception:
+                pass  # チェック失敗しても分析は続行
+
             if has_comparison:
-                # 比較期間モード: dateRange列で期間を区別できる
                 period_desc = (
                     f"date_range_0 = {start_date} 〜 {end_date}（比較元）、"
                     f"date_range_1 = {comp_start_date} 〜 {comp_end_date}（比較先）"
@@ -469,7 +555,7 @@ def _run_ga4_analysis(
                     f"dateRange列の値で期間を区別できる（date_range_0 / date_range_1）。"
                     f"期間比較の仮説を立てる場合は dateRange列を使って GROUP BY またはフィルタすること。"
                     f"この2期間以外のデータは存在しない。]\n\n"
-                    f"{fetched_cols}\n"
+                    f"{fetched_cols}{supplement_note}\n"
                     f"{client_context}"
                     f"{request_text}"
                 )
@@ -478,7 +564,7 @@ def _run_ga4_analysis(
                     f"[重要: 取得データは {start_date} 〜 {end_date} の期間のみ存在する。"
                     f"SQL の WHERE 句およびレポートの期間記述はこの範囲を厳守すること。"
                     f"この範囲外（前年同期など）のデータは存在しないため、前年比較の仮説は絶対に立てないこと。]\n\n"
-                    f"{fetched_cols}\n"
+                    f"{fetched_cols}{supplement_note}\n"
                     f"{client_context}"
                     f"{request_text}"
                 )
@@ -487,6 +573,7 @@ def _run_ga4_analysis(
         emit({"type": "error", "message": str(e)})
     finally:
         emit({"type": "end"})
+        _paused_sessions.pop(analysis_key, None)
         Path(db_path).unlink(missing_ok=True)
 
 
@@ -551,10 +638,11 @@ async def analyze_ga4(
     queue: asyncio.Queue = asyncio.Queue()
     email = session.get("email", "")
     refresh_token = session.get("refresh_token", "")
+    analysis_key = uuid.uuid4().hex  # 補足データ要求の一致に使うキー
     loop.run_in_executor(
         _executor, _run_ga4_analysis,
         property_id, start_date, end_date, request_text, access_token, queue, loop, email,
-        refresh_token, session_id, comp_start_date, comp_end_date,
+        refresh_token, session_id, comp_start_date, comp_end_date, analysis_key,
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -577,6 +665,55 @@ async def analyze_ga4(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/analyze/ga4/supplement")
+async def ga4_supplement(
+    analysis_key: str = Form(...),
+    skip: str = Form(default="false"),
+    supplement_file: Optional[UploadFile] = File(default=None),
+    drive_folder_id: str = Form(default=""),
+    session_id: str = Cookie(default=""),
+) -> JSONResponse:
+    """補足データを受け取り、待機中の分析を再開させる。"""
+    session_info = _paused_sessions.get(analysis_key)
+    if not session_info:
+        return JSONResponse({"ok": False, "message": "セッションが見つかりません（タイムアウト済みの可能性）"})
+
+    ev: threading.Event = session_info["event"]
+    result_holder: list = session_info["result"]
+
+    if skip.lower() == "true" or (not supplement_file and not drive_folder_id):
+        result_holder[0] = None
+        ev.set()
+        return JSONResponse({"ok": True, "skipped": True})
+
+    # ファイルアップロード処理
+    if supplement_file:
+        content = await supplement_file.read()
+        filename = supplement_file.filename or "supplement.csv"
+        result_holder[0] = {"filename": filename, "content": content}
+
+        # Drive へもアップロード（接続済みの場合）
+        session = get_session(session_id)
+        if session and drive_folder_id:
+            access_token = session.get("access_token", "")
+            if access_token:
+                try:
+                    mime = (
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        if filename.endswith((".xlsx", ".xls")) else "text/csv"
+                    )
+                    drive_upload_file(access_token, drive_folder_id, filename, content, mime)
+                except Exception:
+                    pass  # Drive アップロード失敗でも分析は続行
+
+        ev.set()
+        return JSONResponse({"ok": True, "filename": filename})
+
+    result_holder[0] = None
+    ev.set()
+    return JSONResponse({"ok": True, "skipped": True})
 
 
 def _run_prompt_review(queue: asyncio.Queue, loop: asyncio.AbstractEventLoop) -> None:

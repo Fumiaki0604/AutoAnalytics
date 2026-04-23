@@ -80,6 +80,39 @@ def get_recent_docs_text(access_token: str, folder_id: str, max_docs: int = 3) -
     return "\n\n---\n\n".join(parts)
 
 
+def upload_file(
+    access_token: str,
+    folder_id: str,
+    filename: str,
+    content: bytes,
+    mime_type: str = "application/octet-stream",
+) -> str:
+    """ファイルを Google Drive の指定フォルダにアップロードして file_id を返す。"""
+    import json as _json
+    metadata = _json.dumps({"name": filename, "parents": [folder_id]}).encode()
+    boundary = b"--boundary_autoanalytics"
+    body = (
+        boundary + b"\r\n"
+        b"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+        + metadata + b"\r\n"
+        + boundary + b"\r\n"
+        + f"Content-Type: {mime_type}\r\n\r\n".encode()
+        + content + b"\r\n"
+        + boundary + b"--"
+    )
+    res = httpx.post(
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+        headers={
+            **_headers(access_token),
+            "Content-Type": "multipart/related; boundary=boundary_autoanalytics",
+        },
+        content=body,
+        timeout=30,
+    )
+    res.raise_for_status()
+    return res.json().get("id", "")
+
+
 def _export_doc_text(access_token: str, file_id: str, name: str) -> str:
     """Google Doc をプレーンテキストでエクスポートして先頭 MAX_CHARS_PER_DOC 文字を返す。"""
     res = httpx.get(
