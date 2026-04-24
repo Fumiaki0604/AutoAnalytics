@@ -94,7 +94,7 @@ def _run_hypothesis(
         h.result, h.status = "（SQL なし）", "no_sql"
         return
     try:
-        conn = duckdb.connect(db_path, read_only=True)
+        conn = duckdb.connect(db_path)
         try:
             validated_sql = validate_and_sanitize(h.sql, allowed_tables)
             result = conn.execute(validated_sql)
