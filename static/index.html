@@ -267,6 +267,8 @@
         <div class="step" id="step2"><div class="step-icon">2</div><div class="step-body"><div class="step-label">依頼の解析</div><div class="step-msg" id="step2msg">待機中</div></div></div>
         <div class="step" id="step3"><div class="step-icon">3</div><div class="step-body"><div class="step-label">仮説生成 & 検証</div><div class="step-msg" id="step3msg">待機中</div></div></div>
         <div class="step" id="step4"><div class="step-icon">4</div><div class="step-body"><div class="step-label">レポート生成</div><div class="step-msg" id="step4msg">待機中</div></div></div>
+        <div class="step" id="step5"><div class="step-icon">5</div><div class="step-body"><div class="step-label">マーケティング分析</div><div class="step-msg" id="step5msg">待機中</div></div></div>
+        <div class="step" id="step6"><div class="step-icon">6</div><div class="step-body"><div class="step-label">施策提案</div><div class="step-msg" id="step6msg">待機中</div></div></div>
       </div>
       <div class="parsed-info" id="parsedInfo">
         <div class="pi-row"><span class="pi-label">KPI</span><span id="piKpi">—</span></div>
@@ -300,15 +302,20 @@
 
     <!-- マーケターのアドバイスパネル -->
     <div id="marketingPanel" style="display:none">
-      <div id="marketingInitial" style="text-align:center; padding:40px 20px; color:var(--muted);">
-        <div style="font-size:40px; margin-bottom:20px;">📚</div>
-        <button class="run-btn" id="marketingRequestBtn" onclick="requestMarketing()" style="max-width:280px; margin:0 auto;">
-          <span id="marketingBtnIcon">▶</span>
-          <span id="marketingBtnLabel">アドバイスを依頼する</span>
-        </button>
+      <!-- 生成前プレースホルダー -->
+      <div id="marketingPending" style="text-align:center; padding:40px 20px; color:var(--muted);">
+        <div style="font-size:32px; margin-bottom:12px;">⏳</div>
+        <div style="font-size:13px;">レポート生成後に自動で分析します</div>
       </div>
-      <div id="marketingResult" style="display:none">
-        <div class="markdown" id="marketingContent"></div>
+      <!-- Step5: マーケティング分析 -->
+      <div id="marketingAdviceSection" style="display:none; margin-bottom:32px;">
+        <div style="font-size:13px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin-bottom:12px;">マーケティング分析視点</div>
+        <div class="markdown" id="marketingAdviceContent"></div>
+      </div>
+      <!-- Step6: 施策提案 -->
+      <div id="marketingProposalsSection" style="display:none;">
+        <div style="font-size:13px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin-bottom:12px; padding-top:20px; border-top:1px solid var(--border);">具体的な施策提案</div>
+        <div class="markdown" id="marketingProposalsContent"></div>
       </div>
     </div>
   </div>
@@ -622,12 +629,11 @@
     document.getElementById('emptyState').style.display = 'none';
     document.getElementById('reportPanel').style.display = 'none';
     document.getElementById('reportTabBar').style.display = 'none';
-    document.getElementById('marketingInitial').style.display = '';
-    document.getElementById('marketingResult').style.display = 'none';
-    document.getElementById('marketingContent').innerHTML = '';
-    document.getElementById('marketingRequestBtn').disabled = false;
-    document.getElementById('marketingBtnIcon').textContent = '▶';
-    document.getElementById('marketingBtnLabel').textContent = 'アドバイスを依頼する';
+    document.getElementById('marketingPending').style.display = '';
+    document.getElementById('marketingAdviceSection').style.display = 'none';
+    document.getElementById('marketingProposalsSection').style.display = 'none';
+    document.getElementById('marketingAdviceContent').innerHTML = '';
+    document.getElementById('marketingProposalsContent').innerHTML = '';
     switchReportTab('report');
     document.getElementById('progressCard').style.display = '';
     document.getElementById('parsedInfo').style.display = 'none';
@@ -671,7 +677,7 @@
 
   function handleEvent(ev) {
     if (ev.step) {
-      if (ev.step <= 4) setStep(ev.step, ev.status, ev.message);
+      if (ev.step <= 6) setStep(ev.step, ev.status, ev.message);
       if (ev.detail) {
         document.getElementById('piKpi').textContent    = ev.detail.kpi    || '—';
         document.getElementById('piPeriod').textContent = ev.detail.period || '—';
@@ -704,6 +710,21 @@
       setStep(1, 'done', `データ読み込み完了 + ${ev.message}`);
       return;
     }
+    if (ev.type === 'marketing_advice') {
+      document.getElementById('marketingPending').style.display = 'none';
+      const sec = document.getElementById('marketingAdviceSection');
+      sec.style.display = '';
+      document.getElementById('marketingAdviceContent').innerHTML = marked.parse(ev.content);
+      document.querySelectorAll('#marketingAdviceContent pre code').forEach(el => hljs.highlightElement(el));
+      return;
+    }
+    if (ev.type === 'marketing_proposals') {
+      const sec = document.getElementById('marketingProposalsSection');
+      sec.style.display = '';
+      document.getElementById('marketingProposalsContent').innerHTML = marked.parse(ev.content);
+      document.querySelectorAll('#marketingProposalsContent pre code').forEach(el => hljs.highlightElement(el));
+      return;
+    }
     if (ev.type === 'error') alert(`分析エラー: ${ev.message}`);
   }
 
@@ -716,55 +737,6 @@
     document.getElementById('marketingPanel').style.display = tab === 'marketing' ? '' : 'none';
   }
 
-  // ── Marketing on-demand ──
-  async function requestMarketing() {
-    if (!currentReportContent) return;
-    const btn = document.getElementById('marketingRequestBtn');
-    btn.disabled = true;
-    document.getElementById('marketingBtnIcon').textContent = '⏳';
-    document.getElementById('marketingBtnLabel').textContent = '生成中...';
-
-    try {
-      const formData = new FormData();
-      formData.append('report_content', currentReportContent);
-      const res = await fetch('/api/marketing-insight', { method: 'POST', body: formData });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => null);
-        throw new Error(errData?.detail || `HTTP ${res.status}`);
-      }
-
-      document.getElementById('marketingInitial').style.display = 'none';
-      document.getElementById('marketingResult').style.display = '';
-      document.getElementById('marketingContent').innerHTML = '<p style="color:var(--muted);font-size:13px">分析中...</p>';
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const ev = JSON.parse(line.slice(6));
-          if (ev.type === 'marketing') {
-            document.getElementById('marketingContent').innerHTML = marked.parse(ev.content);
-            document.querySelectorAll('#marketingContent pre code').forEach(el => hljs.highlightElement(el));
-          }
-          if (ev.type === 'error') {
-            document.getElementById('marketingContent').innerHTML = `<p style="color:var(--error)">エラー: ${ev.message}</p>`;
-          }
-        }
-      }
-    } catch (e) {
-      document.getElementById('marketingInitial').style.display = 'none';
-      document.getElementById('marketingResult').style.display = '';
-      document.getElementById('marketingContent').innerHTML = `<p style="color:var(--error)">エラー: ${e.message}</p>`;
-    }
-  }
 
   // ── Follow-up buttons ──
   function injectFollowUpButtons(mdText) {

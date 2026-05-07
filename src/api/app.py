@@ -42,7 +42,7 @@ from src.orchestrator.hypothesis_generator import Hypothesis, HypothesisGenerato
 from src.orchestrator.report_generator import ReportGenerator
 from src.orchestrator.request_parser import ParsedRequest, RequestParser
 from src.storage.duckdb_client import DuckDBClient
-from src.orchestrator.marketing_agent import generate_marketing_insight
+from src.orchestrator.marketing_agent import generate_action_proposals, generate_marketing_advice, generate_marketing_insight
 from src.orchestrator.prompt_reviewer import PromptReviewer
 from src.storage.correction_store import format_corrections_context, get_recent_corrections, save_correction
 from src.storage.eval_store import compute_and_save as eval_compute_and_save
@@ -218,6 +218,25 @@ def _run_shared_steps(
 
     emit({"step": 4, "status": "done", "message": "レポート生成完了"})
     emit({"type": "report", "content": report, "filename": output_path.name})
+
+    # Step 5: マーケティング分析（書籍RAG × データ → 観察点 + 解釈）
+    emit({"step": 5, "status": "running", "message": "マーケティング視点で分析中..."})
+    try:
+        advice = generate_marketing_advice(report)
+        emit({"step": 5, "status": "done", "message": "マーケティング分析完了"})
+        emit({"type": "marketing_advice", "content": advice})
+    except Exception as e:
+        emit({"step": 5, "status": "error", "message": f"マーケティング分析エラー: {e}"})
+        return
+
+    # Step 6: 施策提案（即実行できる具体的アクション）
+    emit({"step": 6, "status": "running", "message": "具体的な施策を立案中..."})
+    try:
+        proposals = generate_action_proposals(report, advice)
+        emit({"step": 6, "status": "done", "message": "施策提案完了"})
+        emit({"type": "marketing_proposals", "content": proposals})
+    except Exception as e:
+        emit({"step": 6, "status": "error", "message": f"施策提案エラー: {e}"})
 
 
 
