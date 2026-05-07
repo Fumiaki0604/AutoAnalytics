@@ -555,6 +555,13 @@ def _run_ga4_analysis(
             supplement_note = ""
             try:
                 schema_text = _data_context(db, "ga4_data")
+                # 比較期間がある場合はdateRange定義をスキーマに追記（Haikuが「期間不明」と誤判定しないよう）
+                if has_comparison:
+                    schema_text += (
+                        f"\n\n※ dateRange列の定義: "
+                        f"date_range_0 = {start_date}〜{end_date}（メイン期間）、"
+                        f"date_range_1 = {comp_start_date}〜{comp_end_date}（比較期間）"
+                    )
                 needed, reason, supp_type = _check_supplement_needed(request_text, schema_text)
                 if needed and analysis_key:
                     ev = threading.Event()
