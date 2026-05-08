@@ -170,6 +170,17 @@
     .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; color: var(--muted); text-align: center; gap: 10px; }
     .empty-state .icon { font-size: 48px; opacity: .3; }
     .empty-state p { font-size: 14px; }
+
+    /* Sample question chips */
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .chip { font-size: 12px; font-weight: 500; color: var(--accent); background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 99px; padding: 3px 10px; cursor: pointer; transition: all .15s; white-space: nowrap; }
+    .chip:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* Comparison period quick-select */
+    .comp-quick-btns { display: flex; gap: 6px; margin-bottom: 8px; }
+    .comp-qbtn { font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); cursor: pointer; transition: all .15s; }
+    .comp-qbtn:hover { border-color: var(--accent); color: var(--accent); background: #eef2ff; }
+    .comp-qbtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -237,7 +248,12 @@
               ⚡ 指定した2期間のみ取得（10,000行を効率的に使用）
             </div>
             <label style="margin-top:0">比較期間</label>
-            <div class="date-row">
+            <div class="comp-quick-btns">
+              <button class="comp-qbtn" id="qbtnPrevYear" onclick="setCompPeriod('prev_year')">前年同期</button>
+              <button class="comp-qbtn" id="qbtnPrevMonth" onclick="setCompPeriod('prev_month')">前月</button>
+              <button class="comp-qbtn" id="qbtnCustom" onclick="setCompPeriod('custom')">カスタム</button>
+            </div>
+            <div class="date-row" id="compDateRow">
               <div>
                 <input type="date" id="compStartDate" />
               </div>
@@ -251,6 +267,14 @@
 
       <!-- Request -->
       <label for="requestText">分析依頼</label>
+      <div class="chips" id="sampleChips">
+        <span class="chip" onclick="setChip(this)">CVR低下の原因を調べる</span>
+        <span class="chip" onclick="setChip(this)">チャネル別パフォーマンス比較</span>
+        <span class="chip" onclick="setChip(this)">直帰率が高いページを特定する</span>
+        <span class="chip" onclick="setChip(this)">新規/リピーター別の転換率</span>
+        <span class="chip" onclick="setChip(this)">デバイス別セッションとCV</span>
+        <span class="chip" onclick="setChip(this)">流入経路の効果測定</span>
+      </div>
       <textarea id="requestText" placeholder="例: CVRが先月比で低下している。チャネル別・デバイス別に原因を探りたい"></textarea>
 
       <button class="run-btn" id="runBtn" onclick="startAnalysis()">
@@ -494,6 +518,51 @@
   function toggleCompPeriod() {
     const checked = document.getElementById('compToggle').checked;
     document.getElementById('compPeriodSection').style.display = checked ? '' : 'none';
+    // トグルを外したらボタン選択状態もリセット
+    if (!checked) {
+      document.querySelectorAll('.comp-qbtn').forEach(b => b.classList.remove('active'));
+      document.getElementById('compDateRow').style.display = '';
+    }
+  }
+
+  function setCompPeriod(type) {
+    const start = document.getElementById('startDate').value;
+    const end   = document.getElementById('endDate').value;
+
+    // ボタンのアクティブ状態を更新
+    document.querySelectorAll('.comp-qbtn').forEach(b => b.classList.remove('active'));
+    document.getElementById('qbtn' + (type === 'prev_year' ? 'PrevYear' : type === 'prev_month' ? 'PrevMonth' : 'Custom')).classList.add('active');
+
+    if (type === 'custom') {
+      document.getElementById('compDateRow').style.display = '';
+      return;
+    }
+
+    if (!start || !end) {
+      alert('先に分析期間（開始日・終了日）を指定してください');
+      document.querySelectorAll('.comp-qbtn').forEach(b => b.classList.remove('active'));
+      return;
+    }
+
+    const s = new Date(start);
+    const e = new Date(end);
+
+    if (type === 'prev_year') {
+      s.setFullYear(s.getFullYear() - 1);
+      e.setFullYear(e.getFullYear() - 1);
+    } else if (type === 'prev_month') {
+      s.setMonth(s.getMonth() - 1);
+      e.setMonth(e.getMonth() - 1);
+    }
+
+    document.getElementById('compStartDate').value = s.toISOString().slice(0, 10);
+    document.getElementById('compEndDate').value   = e.toISOString().slice(0, 10);
+    document.getElementById('compDateRow').style.display = '';
+  }
+
+  function setChip(el) {
+    document.getElementById('requestText').value = el.textContent.trim();
+    document.getElementById('requestText').focus();
   }
 
   // ── Supplement modal ──
