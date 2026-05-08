@@ -432,7 +432,7 @@ async def analyze(
 
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
-            deadline = asyncio.get_running_loop().time() + 180.0
+            deadline = asyncio.get_running_loop().time() + 600.0
             while True:
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
@@ -709,11 +709,11 @@ async def analyze_ga4(
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        deadline = asyncio.get_running_loop().time() + 180.0
+        deadline = asyncio.get_running_loop().time() + 600.0
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'タイムアウト'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'message': 'タイムアウト（10分）'}, ensure_ascii=False)}\n\n"
                 break
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=min(15.0, remaining))
