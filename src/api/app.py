@@ -214,7 +214,10 @@ def _run_shared_steps(
                 save_memory(email, source_id, parsed.kpi, parsed.summary, findings, actions)
             except Exception:
                 pass
-        eval_compute_and_save(email, source_id, hypotheses, report)
+        try:
+            eval_compute_and_save(email, source_id, hypotheses, report)
+        except Exception:
+            pass
 
     emit({"step": 4, "status": "done", "message": "レポート生成完了"})
     emit({"type": "report", "content": report, "filename": output_path.name})
@@ -371,7 +374,7 @@ def _run_analysis(
             augmented = f"{client_context}{request_text}" if client_context else request_text
             _run_shared_steps(db, augmented, "csv", emit, email)
     except Exception as e:
-        emit({"type": "error", "message": str(e)})
+        emit({"type": "error", "message": f"[{type(e).__name__}] {e}"})
     finally:
         emit({"type": "end"})
         Path(db_path).unlink(missing_ok=True)
@@ -633,7 +636,7 @@ def _run_ga4_analysis(
                 )
             _run_shared_steps(db, augmented_request, property_id, emit, email)
     except Exception as e:
-        emit({"type": "error", "message": str(e)})
+        emit({"type": "error", "message": f"[{type(e).__name__}] {e}"})
     finally:
         emit({"type": "end"})
         _paused_sessions.pop(analysis_key, None)
