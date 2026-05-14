@@ -45,7 +45,15 @@ class CSVAdapter:
         if not path.exists():
             raise FileNotFoundError(f"CSV が見つかりません: {csv_path}")
 
-        df = pd.read_csv(csv_path)
+        # エンコーディング自動判定（UTF-8 → UTF-8 BOM付き → Shift-JIS の順で試行）
+        for encoding in ("utf-8", "utf-8-sig", "cp932"):
+            try:
+                df = pd.read_csv(csv_path, encoding=encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            raise ValueError("CSV のエンコーディングを判定できませんでした（UTF-8 / Shift-JIS に対応しています）")
 
         # DataFrame を直接 DuckDB に登録（コピーなしでゼロオーバーヘッド）
         self.db.conn.execute(
