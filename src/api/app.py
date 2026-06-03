@@ -775,6 +775,148 @@ async def list_ga4_properties(session_id: str = Cookie(default="")) -> list[dict
             raise HTTPException(status_code=500, detail=str(e))
 
 
+def _ga4_run_report(
+    property_id: str,
+    access_token: str,
+    dimensions: list[str],
+    metrics: list[str],
+    start_date: str,
+    end_date: str,
+    limit: int = 0,
+) -> list[dict]:
+    """GA4 Data API を直接呼び出してレコードリストを返す（DuckDB 不使用）。"""
+    from google.analytics.data_v1beta import BetaAnalyticsDataClient
+    from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
+    from google.oauth2.credentials import Credentials as GoogleCredentials
+
+    creds = GoogleCredentials(token=access_token)
+    client = BetaAnalyticsDataClient(credentials=creds)
+    req = RunReportRequest(
+        property=f"properties/{property_id}",
+        dimensions=[Dimension(name=d) for d in dimensions],
+        metrics=[Metric(name=m) for m in metrics],
+        date_ranges=[DateRange(start_date=start_date, end_date=end_date)],
+        limit=limit if limit > 0 else 10000,
+    )
+    resp = client.run_report(req)
+    rows = []
+    for row in resp.rows:
+        record: dict = {}
+        for i, d in enumerate(dimensions):
+            record[d] = row.dimension_values[i].value
+        for i, m in enumerate(metrics):
+            val = row.metric_values[i].value
+            try:
+                record[m] = float(val) if "." in val else int(val)
+            except (ValueError, TypeError):
+                record[m] = val
+        rows.append(record)
+    return rows
+
+
+@app.get("/api/ga4/dashboard")
+async def ga4_dashboard(
+    property_id: str,
+    start_date: str,
+    end_date: str,
+    session_id: str = Cookie(default=""),
+) -> JSONResponse:
+    """GA4 データをダッシュボード用に集計して返す。"""
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="ログインが必要です")
+    access_token = session.get("access_token", "")
+    refresh_token = session.get("refresh_token", "")
+
+    def _fetch(dims, mets, limit=0):
+        try:
+            return _ga4_run_report(property_id, access_token, dims, mets, start_date, end_date, limit)
+        except Exception:
+            if not refresh_token:
+                raise
+            nonlocal access_token
+            access_token = refresh_access_token(refresh_token)
+            update_access_token(session_id, access_token)
+            return _ga4_run_report(property_id, access_token, dims, mets, start_date, end_date, limit)
+
+    try:
+        # 日別推移（折れ線グラフ用）
+        daily = _fetch(
+            ["date"],
+            ["activeUsers", "sessions", "screenPageViews", "totalRevenue"],
+        )
+        # 日付昇順ソート（GA4は "20250101" 形式）
+        daily.sort(key=lambda r: r.get("date", ""))
+
+        # チャネル別（棒グラフ用）
+        channels_raw = _fetch(
+            ["sessionDefaultChannelGroup"],
+            ["sessions", "transactions", "totalRevenue"],
+        )
+        # チャネルのマッピング（参考リポジトリ準拠）
+        ch_map = {
+            "Cross-network": "広告", "Paid Search": "広告", "Display": "広告",
+            "Paid Social": "広告", "Paid Other": "広告", "Paid Video": "広告",
+            "Paid Shopping": "広告", "Organic Social": "SNS",
+            "Organic Search": "自然検索", "Organic Video": "自然検索",
+            "Organic Shopping": "自然検索",
+        }
+        agg: dict = {}
+        for r in channels_raw:
+            ch = ch_map.get(r["sessionDefaultChannelGroup"], r["sessionDefaultChannelGroup"])
+            if ch not in agg:
+                agg[ch] = {"channel": ch, "sessions": 0, "transactions": 0, "totalRevenue": 0.0}
+            agg[ch]["sessions"] += r.get("sessions", 0)
+            agg[ch]["transactions"] += r.get("transactions", 0)
+            agg[ch]["totalRevenue"] += r.get("totalRevenue", 0.0)
+        channels = sorted(agg.values(), key=lambda x: -x["sessions"])
+
+        # 商品TOP10（売上順）
+        products: list[dict] = []
+        try:
+            prod_raw = _fetch(
+                ["itemName"],
+                ["itemRevenue", "itemsPurchased"],
+                limit=50,
+            )
+            products = sorted(
+                [r for r in prod_raw if r.get("itemRevenue", 0) > 0],
+                key=lambda x: -x.get("itemRevenue", 0),
+            )[:10]
+        except Exception:
+            pass  # 商品データなし（EC機能未設定）
+
+        # 直帰率の高いページTOP10
+        bounce_pages: list[dict] = []
+        try:
+            bounce_raw = _fetch(
+                ["pagePath", "pageTitle"],
+                ["screenPageViews", "sessions", "engagedSessions"],
+            )
+            for r in bounce_raw:
+                s = r.get("sessions", 0)
+                e = r.get("engagedSessions", 0)
+                if s >= 10:
+                    r["bounceRate"] = round(1 - e / s, 4) if s > 0 else 0
+                    r["score"] = r["bounceRate"] * (s ** 0.5)
+            bounce_pages = sorted(
+                [r for r in bounce_raw if "bounceRate" in r],
+                key=lambda x: -x.get("score", 0),
+            )[:10]
+        except Exception:
+            pass
+
+        return JSONResponse({
+            "daily": daily,
+            "channels": channels,
+            "products": products,
+            "bounce_pages": bounce_pages,
+        })
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"[{type(e).__name__}] {e}")
+
+
 @app.post("/api/analyze/ga4")
 async def analyze_ga4(
     property_id: str = Form(...),

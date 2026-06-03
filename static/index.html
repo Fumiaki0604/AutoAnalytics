@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AutoAnalytics</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <style>
@@ -171,6 +172,22 @@
     .empty-state .icon { font-size: 48px; opacity: .3; }
     .empty-state p { font-size: 14px; }
 
+    /* Dashboard */
+    .dash-btn { width:100%;margin-top:10px;padding:9px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;color:#15803d;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s; }
+    .dash-btn:hover { background:#dcfce7; }
+    .dash-card { background:var(--surface);border-radius:var(--radius);box-shadow:0 1px 4px rgba(0,0,0,.08);padding:18px 20px;margin-bottom:16px; }
+    .dash-card-title { font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px; }
+    .kpi-grid { display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px; }
+    .kpi-item { background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:12px 14px; }
+    .kpi-label { font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px; }
+    .kpi-value { font-size:22px;font-weight:700;color:var(--text);margin-top:3px; }
+    .dash-table { width:100%;border-collapse:collapse;font-size:12px; }
+    .dash-table th { background:#f1f5f9;font-weight:700;color:var(--muted);padding:6px 10px;text-align:left;border-bottom:1px solid var(--border); }
+    .dash-table td { padding:6px 10px;border-bottom:1px solid #f1f5f9;color:var(--text); }
+    .dash-table tr:last-child td { border-bottom:none; }
+    .dash-loading { text-align:center;padding:40px;color:var(--muted);font-size:14px; }
+    canvas.dash-chart { max-height:220px; }
+
     /* Sample question chips */
     .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
     .chip { font-size: 12px; font-weight: 500; color: var(--accent); background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 99px; padding: 3px 10px; cursor: pointer; transition: all .15s; white-space: nowrap; }
@@ -268,6 +285,7 @@
             </div>
           </div>
         </div>
+        <button class="dash-btn" onclick="showDashboard()">📊 ダッシュボードを表示する</button>
       </div>
 
       <!-- Request -->
@@ -286,6 +304,11 @@
         <span id="btnIcon">▶</span>
         <span id="btnLabel">分析を開始する</span>
       </button>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboardSection" style="display:none;margin-top:16px">
+      <div id="dashboardContent"></div>
     </div>
 
     <!-- Progress -->
@@ -533,6 +556,130 @@
       link.style.display = 'none';
     }
   }
+
+  // ---- Dashboard ----
+  let _dashCharts = [];
+
+  async function showDashboard() {
+    const pid = document.getElementById('propertyId').value;
+    const start = document.getElementById('startDate').value;
+    const end   = document.getElementById('endDate').value;
+    if (!pid)   { alert('GA4 プロパティを選択してください'); return; }
+    if (!start || !end) { alert('期間を入力してください'); return; }
+
+    const sec = document.getElementById('dashboardSection');
+    const con = document.getElementById('dashboardContent');
+    sec.style.display = '';
+    con.innerHTML = '<div class="dash-loading">📊 データ取得中...</div>';
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // 既存チャートを破棄
+    _dashCharts.forEach(c => c.destroy());
+    _dashCharts = [];
+
+    try {
+      const res = await fetch(`/api/ga4/dashboard?property_id=${encodeURIComponent(pid)}&start_date=${start}&end_date=${end}`);
+      if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      const d = await res.json();
+      _renderDashboard(con, d);
+    } catch(e) {
+      con.innerHTML = `<div class="dash-card"><p style="color:#dc2626;font-size:13px">エラー: ${e.message}</p></div>`;
+    }
+  }
+
+  function _fmt(n) {
+    if (n == null) return '—';
+    if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+    if (n >= 1000)    return (n/1000).toFixed(1) + 'K';
+    return Number(n).toLocaleString();
+  }
+  function _fmtYen(n) {
+    if (n == null || n === 0) return '—';
+    return '¥' + Math.round(n).toLocaleString();
+  }
+  function _ga4date(s) {
+    // "20250101" → "1/1"
+    return s.length === 8 ? `${parseInt(s.slice(4,6))}/${parseInt(s.slice(6,8))}` : s;
+  }
+
+  function _renderDashboard(con, d) {
+    const { daily, channels, products, bounce_pages } = d;
+
+    // KPI合計
+    const totSessions  = daily.reduce((a,r) => a + (r.sessions||0), 0);
+    const totUsers     = daily.reduce((a,r) => a + (r.activeUsers||0), 0);
+    const totPV        = daily.reduce((a,r) => a + (r.screenPageViews||0), 0);
+    const totRevenue   = daily.reduce((a,r) => a + (r.totalRevenue||0), 0);
+
+    con.innerHTML = `
+      <div class="kpi-grid">
+        <div class="kpi-item"><div class="kpi-label">セッション</div><div class="kpi-value">${_fmt(totSessions)}</div></div>
+        <div class="kpi-item"><div class="kpi-label">ユーザー数</div><div class="kpi-value">${_fmt(totUsers)}</div></div>
+        <div class="kpi-item"><div class="kpi-label">ページビュー</div><div class="kpi-value">${_fmt(totPV)}</div></div>
+        <div class="kpi-item"><div class="kpi-label">売上</div><div class="kpi-value">${_fmtYen(totRevenue)}</div></div>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-title">日別推移</div>
+        <canvas id="dashLineChart" class="dash-chart"></canvas>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-title">チャネル別セッション</div>
+        <canvas id="dashBarChart" class="dash-chart"></canvas>
+      </div>
+
+      ${products.length ? `
+      <div class="dash-card">
+        <div class="dash-card-title">商品別売上 TOP${products.length}</div>
+        <table class="dash-table">
+          <thead><tr><th>商品名</th><th style="text-align:right">売上</th><th style="text-align:right">購入数</th></tr></thead>
+          <tbody>${products.map(p=>`<tr><td>${p.itemName}</td><td style="text-align:right">${_fmtYen(p.itemRevenue)}</td><td style="text-align:right">${p.itemsPurchased||0}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>` : ''}
+
+      ${bounce_pages.length ? `
+      <div class="dash-card">
+        <div class="dash-card-title">改善優先度の高いページ TOP${bounce_pages.length}</div>
+        <table class="dash-table">
+          <thead><tr><th>パス</th><th style="text-align:right">セッション</th><th style="text-align:right">直帰率</th></tr></thead>
+          <tbody>${bounce_pages.map(p=>`<tr><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.pagePath}">${p.pagePath}</td><td style="text-align:right">${_fmt(p.sessions)}</td><td style="text-align:right">${(p.bounceRate*100).toFixed(1)}%</td></tr>`).join('')}</tbody>
+        </table>
+      </div>` : ''}
+    `;
+
+    // 折れ線グラフ（セッション + ユーザー）
+    const lineCtx = document.getElementById('dashLineChart');
+    if (lineCtx && daily.length) {
+      const labels = daily.map(r => _ga4date(r.date));
+      _dashCharts.push(new Chart(lineCtx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'セッション', data: daily.map(r=>r.sessions||0), borderColor:'#4f46e5', backgroundColor:'rgba(79,70,229,.08)', tension:.3, pointRadius:2, fill:true },
+            { label: 'ユーザー',   data: daily.map(r=>r.activeUsers||0), borderColor:'#10b981', backgroundColor:'transparent', tension:.3, pointRadius:2 },
+          ]
+        },
+        options: { responsive:true, plugins:{ legend:{ labels:{ font:{size:11} } } }, scales:{ x:{ ticks:{ font:{size:10}, maxTicksLimit:14 } }, y:{ ticks:{ font:{size:10} }, beginAtZero:true } } }
+      }));
+    }
+
+    // 棒グラフ（チャネル別）
+    const barCtx = document.getElementById('dashBarChart');
+    if (barCtx && channels.length) {
+      const colors = ['#4f46e5','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#64748b'];
+      _dashCharts.push(new Chart(barCtx, {
+        type: 'bar',
+        data: {
+          labels: channels.map(c=>c.channel),
+          datasets: [{ label: 'セッション', data: channels.map(c=>c.sessions), backgroundColor: channels.map((_,i)=>colors[i%colors.length]) }]
+        },
+        options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ font:{size:11} } }, y:{ ticks:{ font:{size:10} }, beginAtZero:true } } }
+      }));
+    }
+  }
+  // ---- /Dashboard ----
 
   function toggleCompPeriod() {
     const checked = document.getElementById('compToggle').checked;
