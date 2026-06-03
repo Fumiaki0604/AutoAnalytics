@@ -227,17 +227,14 @@
         </div>
         <div id="ga4Form">
           <label>GA4 プロパティ</label>
-          <div style="display:flex;align-items:center;gap:8px">
-            <select id="propertyId" disabled onchange="updateDashboardLink()" style="flex:1;width:auto">
-              <option value="">ログインするとプロパティが表示されます</option>
-            </select>
-            <a id="dashboardLink" href="#" target="_blank" rel="noopener noreferrer"
-               title="GA4 ダッシュボードを別タブで開く"
-               style="display:none;flex-shrink:0;padding:8px 10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;color:var(--accent);text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap;transition:background .15s"
-               onmouseover="this.style.background='#e0e7ff'" onmouseout="this.style.background='#eef2ff'">
-              ↗ 開く
-            </a>
-          </div>
+          <select id="propertyId" disabled onchange="updateDashboardLink()">
+            <option value="">ログインするとプロパティが表示されます</option>
+          </select>
+          <a id="dashboardLink" href="#" target="_blank" rel="noopener noreferrer"
+             style="display:none;margin-top:6px;padding:7px 12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;color:var(--accent);text-decoration:none;font-size:12px;font-weight:600;transition:background .15s"
+             onmouseover="this.style.background='#e0e7ff'" onmouseout="this.style.background='#eef2ff'">
+            ↗ GA4 ダッシュボードを開く
+          </a>
           <label>期間</label>
           <div class="date-row">
             <div>
