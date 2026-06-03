@@ -829,12 +829,12 @@ async def ga4_dashboard(
     refresh_token = session.get("refresh_token", "")
 
     def _fetch(dims, mets, limit=0):
+        nonlocal access_token
         try:
             return _ga4_run_report(property_id, access_token, dims, mets, start_date, end_date, limit)
         except Exception:
             if not refresh_token:
                 raise
-            nonlocal access_token
             access_token = refresh_access_token(refresh_token)
             update_access_token(session_id, access_token)
             return _ga4_run_report(property_id, access_token, dims, mets, start_date, end_date, limit)
