@@ -301,10 +301,6 @@
       </button>
     </div>
 
-    <!-- Dashboard -->
-    <div id="dashboardSection" style="display:none;margin-top:16px">
-      <div id="dashboardContent"></div>
-    </div>
 
     <!-- Progress -->
     <div class="card" style="margin-top:16px; display:none" id="progressCard">
@@ -331,6 +327,7 @@
     <div class="tabs" id="reportTabBar" style="display:none; margin-bottom:20px;">
       <button class="tab active" onclick="switchReportTab('report')">📊 分析レポート</button>
       <button class="tab" onclick="switchReportTab('marketing')">📚 マーケターのアドバイス</button>
+      <button class="tab" id="dashboardTabBtn" onclick="switchReportTab('dashboard')" style="display:none">📈 ダッシュボード</button>
     </div>
 
     <div class="empty-state" id="emptyState">
@@ -364,6 +361,11 @@
         <div style="font-size:13px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin-bottom:12px; padding-top:20px; border-top:1px solid var(--border);">具体的な施策提案</div>
         <div class="markdown" id="marketingProposalsContent"></div>
       </div>
+    </div>
+
+    <!-- ダッシュボードパネル -->
+    <div id="dashboardPanel" style="display:none">
+      <div id="dashboardTabContent"><div class="dash-loading">期間を選んで「ダッシュボードを表示する」を押してください</div></div>
     </div>
   </div>
 </div>
@@ -548,11 +550,18 @@
     if (!pid)   { alert('GA4 プロパティを選択してください'); return; }
     if (!start || !end) { alert('期間を入力してください'); return; }
 
-    const sec = document.getElementById('dashboardSection');
-    const con = document.getElementById('dashboardContent');
-    sec.style.display = '';
-    con.innerHTML = '<div class="dash-loading">📊 データ取得中...</div>';
-    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // 結果カードのタブに表示
+    const tabCon = document.getElementById('dashboardTabContent');
+    tabCon.innerHTML = '<div class="dash-loading">📊 データ取得中...</div>';
+
+    // タブボタンを表示してダッシュボードタブに切り替え
+    document.getElementById('dashboardTabBtn').style.display = '';
+    document.getElementById('reportTabBar').style.display = '';
+    document.getElementById('emptyState').style.display = 'none';
+    switchReportTab('dashboard');
+
+    // 結果カードまでスクロール
+    document.getElementById('reportTabBar').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     // 既存チャートを破棄
     _dashCharts.forEach(c => c.destroy());
@@ -562,9 +571,9 @@
       const res = await fetch(`/api/ga4/dashboard?property_id=${encodeURIComponent(pid)}&start_date=${start}&end_date=${end}`);
       if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       const d = await res.json();
-      _renderDashboard(con, d);
+      _renderDashboard(tabCon, d);
     } catch(e) {
-      con.innerHTML = `<div class="dash-card"><p style="color:#dc2626;font-size:13px">エラー: ${e.message}</p></div>`;
+      tabCon.innerHTML = `<div class="dash-card"><p style="color:#dc2626;font-size:13px">エラー: ${e.message}</p></div>`;
     }
   }
 
@@ -602,12 +611,12 @@
 
       <div class="dash-card">
         <div class="dash-card-title">日別推移</div>
-        <canvas id="dashLineChart" class="dash-chart"></canvas>
+        <canvas id="dashTabLineChart" class="dash-chart"></canvas>
       </div>
 
       <div class="dash-card">
         <div class="dash-card-title">チャネル別セッション</div>
-        <canvas id="dashBarChart" class="dash-chart"></canvas>
+        <canvas id="dashTabBarChart" class="dash-chart"></canvas>
       </div>
 
       ${products.length ? `
@@ -630,7 +639,7 @@
     `;
 
     // 折れ線グラフ（セッション + ユーザー）
-    const lineCtx = document.getElementById('dashLineChart');
+    const lineCtx = document.getElementById('dashTabLineChart');
     if (lineCtx && daily.length) {
       const labels = daily.map(r => _ga4date(r.date));
       _dashCharts.push(new Chart(lineCtx, {
@@ -647,7 +656,7 @@
     }
 
     // 棒グラフ（チャネル別）
-    const barCtx = document.getElementById('dashBarChart');
+    const barCtx = document.getElementById('dashTabBarChart');
     if (barCtx && channels.length) {
       const colors = ['#4f46e5','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#64748b'];
       _dashCharts.push(new Chart(barCtx, {
@@ -946,11 +955,12 @@
 
   // ── Report tabs ──
   function switchReportTab(tab) {
-    document.querySelectorAll('#reportTabBar .tab').forEach((t, i) => {
-      t.classList.toggle('active', (i === 0 && tab === 'report') || (i === 1 && tab === 'marketing'));
-    });
+    document.querySelectorAll('#reportTabBar .tab').forEach(t => t.classList.remove('active'));
+    const idx = { report: 0, marketing: 1, dashboard: 2 }[tab] ?? 0;
+    document.querySelectorAll('#reportTabBar .tab')[idx]?.classList.add('active');
     document.getElementById('reportPanel').style.display = tab === 'report' ? '' : 'none';
     document.getElementById('marketingPanel').style.display = tab === 'marketing' ? '' : 'none';
+    document.getElementById('dashboardPanel').style.display = tab === 'dashboard' ? '' : 'none';
   }
 
 
