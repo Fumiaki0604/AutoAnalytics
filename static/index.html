@@ -227,9 +227,17 @@
         </div>
         <div id="ga4Form">
           <label>GA4 プロパティ</label>
-          <select id="propertyId" disabled>
-            <option value="">ログインするとプロパティが表示されます</option>
-          </select>
+          <div style="display:flex;align-items:center;gap:8px">
+            <select id="propertyId" disabled onchange="updateDashboardLink()" style="flex:1;width:auto">
+              <option value="">ログインするとプロパティが表示されます</option>
+            </select>
+            <a id="dashboardLink" href="#" target="_blank" rel="noopener noreferrer"
+               title="GA4 ダッシュボードを別タブで開く"
+               style="display:none;flex-shrink:0;padding:8px 10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;color:var(--accent);text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap;transition:background .15s"
+               onmouseover="this.style.background='#e0e7ff'" onmouseout="this.style.background='#eef2ff'">
+              ↗ 開く
+            </a>
+          </div>
           <label>期間</label>
           <div class="date-row">
             <div>
@@ -513,6 +521,19 @@
     const sel = document.getElementById('propertyId');
     sel.disabled = true;
     sel.innerHTML = '<option value="">ログインするとプロパティが表示されます</option>';
+    updateDashboardLink();
+  }
+
+  function updateDashboardLink() {
+    const sel = document.getElementById('propertyId');
+    const link = document.getElementById('dashboardLink');
+    const pid = sel.value;
+    if (pid) {
+      link.href = `https://analytics.google.com/analytics/web/#/p${pid}/`;
+      link.style.display = '';
+    } else {
+      link.style.display = 'none';
+    }
   }
 
   function toggleCompPeriod() {

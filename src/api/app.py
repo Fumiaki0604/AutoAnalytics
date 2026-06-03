@@ -3,10 +3,14 @@
 import asyncio
 import io
 import json
+import os
+import re
 import tempfile
 import threading
+import time
 import uuid
 import duckdb
+import httpx
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -51,6 +55,76 @@ from src.storage.prompt_store import PROMPT_FILES, save_prompt_version
 from src.storage.sql_validator import SQLValidationError, validate_and_sanitize
 
 load_dotenv()
+
+# ------------------------------------------------------------------
+# Supabase 生死確認 & 自動復旧
+# ------------------------------------------------------------------
+
+_SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+_SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+_SUPABASE_MGMT_TOKEN = os.environ.get("SUPABASE_MANAGEMENT_TOKEN", "")
+_m = re.search(r"https://([a-z0-9]+)\.supabase\.co", _SUPABASE_URL)
+_SUPABASE_PROJECT_REF = _m.group(1) if _m else ""
+
+
+def _supabase_ping() -> bool:
+    """Supabase REST API に疎通確認。200 が返れば True。"""
+    if not _SUPABASE_URL or not _SUPABASE_KEY:
+        return True  # 設定なし → スキップ
+    try:
+        res = httpx.get(
+            f"{_SUPABASE_URL}/rest/v1/sessions",
+            headers={
+                "apikey": _SUPABASE_KEY,
+                "Authorization": f"Bearer {_SUPABASE_KEY}",
+            },
+            params={"limit": "0"},
+            timeout=6,
+        )
+        return res.status_code == 200
+    except Exception:
+        return False
+
+
+def _supabase_ensure_awake() -> tuple[bool, str]:
+    """Supabase が起動中か確認し、停止中なら自動復旧を試みる。
+
+    Returns:
+        (ok: bool, message: str)
+        ok=True  → 利用可能
+        ok=False → 復旧不可（Management Token 未設定、または復旧タイムアウト）
+    """
+    if _supabase_ping():
+        return True, ""
+
+    if not _SUPABASE_MGMT_TOKEN:
+        return False, (
+            "Supabase が停止中です。"
+            "ダッシュボード（https://supabase.com/dashboard）でプロジェクトを Resume してください。"
+            "環境変数 SUPABASE_MANAGEMENT_TOKEN を設定すると自動復旧が有効になります。"
+        )
+
+    if not _SUPABASE_PROJECT_REF:
+        return False, "Supabase プロジェクト参照を SUPABASE_URL から取得できません。"
+
+    # 復旧リクエスト送信
+    try:
+        httpx.post(
+            f"https://api.supabase.com/v1/projects/{_SUPABASE_PROJECT_REF}/restore",
+            headers={"Authorization": f"Bearer {_SUPABASE_MGMT_TOKEN}"},
+            timeout=15,
+        )
+    except Exception as e:
+        return False, f"Supabase 復旧リクエスト失敗: {e}"
+
+    # 最大 90 秒待機（5 秒 × 18 回）
+    for _ in range(18):
+        time.sleep(5)
+        if _supabase_ping():
+            return True, ""
+
+    return False, "Supabase の復旧を待機しましたが、タイムアウトしました。しばらく後に再試行してください。"
+
 
 app = FastAPI(title="AutoAnalytics")
 
@@ -365,6 +439,12 @@ def _run_analysis(
 
     db_path = str(DATA_DIR / f"session_{uuid.uuid4().hex}.duckdb")
     try:
+        # Supabase 起動確認（停止中なら自動復旧を試みる）
+        ok, msg = _supabase_ensure_awake()
+        if not ok:
+            emit({"type": "error", "message": msg})
+            return
+
         with DuckDBClient(db_path) as db:
             emit({"step": 1, "status": "running", "message": "CSV を読み込み中..."})
             meta = CSVAdapter(db).load(csv_path, table_name)
@@ -383,6 +463,13 @@ def _run_analysis(
 # ------------------------------------------------------------------
 # Routes
 # ------------------------------------------------------------------
+
+@app.get("/api/health/supabase")
+async def health_supabase() -> JSONResponse:
+    """Supabase の死活確認エンドポイント。フロントからポーリング可能。"""
+    alive = _supabase_ping()
+    return JSONResponse({"status": "ok" if alive else "paused"})
+
 
 @app.get("/")
 async def index() -> FileResponse:
@@ -528,6 +615,12 @@ def _run_ga4_analysis(
 
     db_path = str(DATA_DIR / f"session_{uuid.uuid4().hex}.duckdb")
     try:
+        # Supabase 起動確認（停止中なら自動復旧を試みる）
+        ok, msg = _supabase_ensure_awake()
+        if not ok:
+            emit({"type": "error", "message": msg})
+            return
+
         with DuckDBClient(db_path) as db:
             # 比較期間の有無を判定
             has_comparison = bool(comp_start_date and comp_end_date)
