@@ -504,7 +504,7 @@
         sel.innerHTML = '<option value="">アクセス可能なプロパティがありません</option>';
         return;
       }
-      sel.innerHTML = '<option value="">プロパティを選択してください</option>';
+      sel.innerHTML = props.length === 1 ? '' : '<option value="">プロパティを選択してください</option>';
       props.forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.id;
@@ -512,6 +512,7 @@
         sel.appendChild(opt);
       });
       sel.disabled = false;
+      updateDashboardLink();
     } catch (e) {
       sel.innerHTML = `<option value="">取得に失敗: ${e.message}</option>`;
     }
