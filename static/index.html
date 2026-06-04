@@ -604,7 +604,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dashboard_data: _lastDashboardData }),
       });
-      if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(typeof e.detail === 'string' ? e.detail : JSON.stringify(e.detail) || `HTTP ${res.status}`); }
       const data = await res.json();
       const questions = data.questions || [];
       if (questions.length === 0) { alert('問いを生成できませんでした'); return; }
@@ -1152,6 +1152,26 @@
   const d30 = new Date(today); d30.setDate(d30.getDate() - 30);
   document.getElementById('endDate').value = today.toISOString().slice(0, 10);
   document.getElementById('startDate').value = d30.toISOString().slice(0, 10);
+
+  // 期間変更時にダッシュボードを自動再取得（既に表示済みの場合のみ）
+  let _dashRefreshTimer = null;
+  function _onDateChange() {
+    if (!_lastDashboardData) return; // まだ一度も表示していなければ何もしない
+    clearTimeout(_dashRefreshTimer);
+    _dashRefreshTimer = setTimeout(() => {
+      const pid   = document.getElementById('propertyId').value;
+      const start = document.getElementById('startDate').value;
+      const end   = document.getElementById('endDate').value;
+      if (pid && start && end) showDashboard();
+    }, 600); // 600ms デバウンス
+  }
+  ['startDate','endDate','compStartDate','compEndDate'].forEach(id => {
+    document.getElementById(id).addEventListener('change', _onDateChange);
+  });
+  document.getElementById('compToggle').addEventListener('change', _onDateChange);
+  document.getElementById('propertyId').addEventListener('change', () => {
+    if (_lastDashboardData) showDashboard();
+  });
 </script>
 </body>
 </html>
