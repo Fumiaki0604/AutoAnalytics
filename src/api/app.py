@@ -218,9 +218,10 @@ def _run_shared_steps(
     source_id: str,
     emit: callable,
     email: str = "",
+    include_marketing: bool = True,
 ) -> None:
-    """Step 2〜5: 依頼パース → 仮説検証 → レポート → マーケティング提案。
-    CSV・GA4 両フローで共有する。
+    """Step 2〜6: 依頼パース → 仮説検証 → レポート → マーケティング提案。
+    CSV・GA4 両フローで共有する。include_marketing=False の場合 Step5/6 をスキップ。
     """
     system_prompt = _load_prompt("system_prompt.md")
     hypothesis_prompt = _load_prompt("hypothesis_prompt.md")
@@ -296,7 +297,12 @@ def _run_shared_steps(
     emit({"step": 4, "status": "done", "message": "レポート生成完了"})
     emit({"type": "report", "content": report, "filename": output_path.name})
 
-    # Step 5: マーケティング分析（書籍RAG × データ → 観察点 + 解釈）
+    # Step 5/6: マーケティング分析 & 施策提案（オプション）
+    if not include_marketing:
+        emit({"step": 5, "status": "skipped", "message": "スキップ"})
+        emit({"step": 6, "status": "skipped", "message": "スキップ"})
+        return
+
     emit({"step": 5, "status": "running", "message": "マーケティング視点で分析中..."})
     try:
         advice = generate_marketing_advice(report)
@@ -433,6 +439,7 @@ def _run_analysis(
     email: str = "",
     access_token: str = "",
     drive_folder_id: str = "",
+    include_marketing: bool = True,
 ) -> None:
     def emit(event: dict) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
@@ -452,7 +459,7 @@ def _run_analysis(
 
             client_context = _fetch_drive_context(access_token, drive_folder_id, emit)
             augmented = f"{client_context}{request_text}" if client_context else request_text
-            _run_shared_steps(db, augmented, "csv", emit, email)
+            _run_shared_steps(db, augmented, "csv", emit, email, include_marketing)
     except Exception as e:
         emit({"type": "error", "message": f"[{type(e).__name__}] {e}"})
     finally:
@@ -500,6 +507,7 @@ async def analyze(
     request_text: str = Form(...),
     table_name: str = Form("main_data"),
     drive_folder_id: str = Form(default=""),
+    include_marketing: str = Form(default="true"),
     session_id: str = Cookie(default=""),
 ) -> StreamingResponse:
     # CSV を一時ファイルに保存
@@ -511,6 +519,7 @@ async def analyze(
     session = get_session(session_id)
     email = session.get("email", "") if session else ""
     access_token = session.get("access_token", "") if session else ""
+    include_marketing_bool = include_marketing.lower() != "false"
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
@@ -518,6 +527,7 @@ async def analyze(
     loop.run_in_executor(
         _executor, _run_analysis,
         tmp_path, request_text, table_name, queue, loop, email, access_token, drive_folder_id,
+        include_marketing_bool,
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -609,6 +619,7 @@ def _run_ga4_analysis(
     comp_start_date: str = "",
     comp_end_date: str = "",
     analysis_key: str = "",
+    include_marketing: bool = True,
 ) -> None:
     def emit(event: dict) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(event), loop)
@@ -727,7 +738,7 @@ def _run_ga4_analysis(
                     f"{client_context}"
                     f"{request_text}"
                 )
-            _run_shared_steps(db, augmented_request, property_id, emit, email)
+            _run_shared_steps(db, augmented_request, property_id, emit, email, include_marketing)
     except Exception as e:
         emit({"type": "error", "message": f"[{type(e).__name__}] {e}"})
     finally:
@@ -917,6 +928,78 @@ async def ga4_dashboard(
         raise HTTPException(status_code=500, detail=f"[{type(e).__name__}] {e}")
 
 
+@app.post("/api/ga4/suggest")
+async def ga4_suggest(request: Request) -> JSONResponse:
+    """ダッシュボードデータからAIが深堀すべき問いを3〜5件生成する。"""
+    body = await request.json()
+    dashboard_data = body.get("dashboard_data", {})
+
+    parts: list[str] = []
+
+    daily = dashboard_data.get("daily", [])
+    if len(daily) >= 2:
+        first, last = daily[0], daily[-1]
+        parts.append(f"期間: {first.get('date','?')} 〜 {last.get('date','?')} ({len(daily)}日間)")
+        s_first = first.get("sessions", 0)
+        s_last = last.get("sessions", 0)
+        if s_first > 0:
+            trend = round((s_last - s_first) / s_first * 100, 1)
+            parts.append(f"セッション推移: 開始={s_first} → 終了={s_last} ({trend:+.1f}%)")
+        # 期間合計
+        total_sessions = sum(r.get("sessions", 0) for r in daily)
+        total_revenue = sum(r.get("totalRevenue", 0) for r in daily)
+        parts.append(f"期間合計: セッション={total_sessions:,}, 売上={total_revenue:,.0f}")
+
+    channels = dashboard_data.get("channels", [])
+    if channels:
+        ch_lines = [
+            f"  - {c.get('channel','?')}: セッション={c.get('sessions',0):,}, CV={c.get('transactions',0)}"
+            for c in channels
+        ]
+        parts.append("チャネル別:\n" + "\n".join(ch_lines))
+
+    bounce_pages = dashboard_data.get("bounce_pages", [])
+    if bounce_pages:
+        bp_lines = [
+            f"  - {b.get('pageTitle') or b.get('pagePath','?')}: 直帰率={round(b.get('bounceRate',0)*100,1)}%, セッション={b.get('sessions',0)}"
+            for b in bounce_pages[:5]
+        ]
+        parts.append("直帰率上位ページ:\n" + "\n".join(bp_lines))
+
+    products = dashboard_data.get("products", [])
+    if products:
+        p_lines = [
+            f"  - {p.get('itemName','?')}: 売上={p.get('itemRevenue',0):,.0f}, 個数={p.get('itemsPurchased',0)}"
+            for p in products[:5]
+        ]
+        parts.append("上位商品:\n" + "\n".join(p_lines))
+
+    summary = "\n\n".join(parts) if parts else "データなし"
+
+    from src.llm.llm_client import LLMMessage
+    llm = AnthropicClient()
+    prompt = (
+        "あなたはWebアナリストです。以下のGA4ダッシュボードデータを分析し、\n"
+        "深堀調査すべき「問い」を3〜5件生成してください。\n\n"
+        f"## ダッシュボードデータ\n{summary}\n\n"
+        "## 要件\n"
+        "- 数値への具体的な言及を含む仮説形式の問い\n"
+        "- ビジネスの意思決定に直結する問い（「なぜ〜が低いのか」「〜の原因は何か」等）\n"
+        "- 50文字以内の簡潔な日本語\n"
+        "- データが示す異常・ギャップ・機会に基づく問い\n\n"
+        "JSONのみ返してください（説明不要）:\n"
+        '{"questions": ["問い1", "問い2", "問い3"]}'
+    )
+    response = llm.complete([LLMMessage(role="user", content=prompt)])
+    m = re.search(r"\{.*\}", response.content, re.DOTALL)
+    if m:
+        try:
+            return JSONResponse(json.loads(m.group()))
+        except Exception:
+            pass
+    return JSONResponse({"questions": []})
+
+
 @app.post("/api/analyze/ga4")
 async def analyze_ga4(
     property_id: str = Form(...),
@@ -925,6 +1008,7 @@ async def analyze_ga4(
     request_text: str = Form(...),
     comp_start_date: str = Form(default=""),
     comp_end_date: str = Form(default=""),
+    include_marketing: str = Form(default="true"),
     session_id: str = Cookie(default=""),
 ) -> StreamingResponse:
     session = get_session(session_id)
@@ -939,11 +1023,13 @@ async def analyze_ga4(
     queue: asyncio.Queue = asyncio.Queue()
     email = session.get("email", "")
     refresh_token = session.get("refresh_token", "")
+    include_marketing_bool = include_marketing.lower() != "false"
     analysis_key = uuid.uuid4().hex  # 補足データ要求の一致に使うキー
     loop.run_in_executor(
         _executor, _run_ga4_analysis,
         property_id, start_date, end_date, request_text, access_token, queue, loop, email,
         refresh_token, session_id, comp_start_date, comp_end_date, analysis_key,
+        include_marketing_bool,
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:

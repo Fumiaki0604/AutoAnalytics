@@ -134,6 +134,8 @@
     .step.running .step-icon { background: #fef3c7; color: var(--warning); animation: pulse 1.4s infinite; }
     .step.done    .step-icon { background: #d1fae5; color: var(--success); }
     .step.error   .step-icon { background: #fee2e2; color: var(--error); }
+    .step.skipped .step-icon { background: #f1f5f9; color: #94a3b8; }
+    .step.skipped { opacity: .5; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
     .step-body { flex: 1; min-width: 0; }
     .step-label { font-size: 13px; font-weight: 600; }
@@ -281,10 +283,16 @@
           </div>
         </div>
         <button class="dash-btn" onclick="showDashboard()">📊 ダッシュボードを表示する</button>
+        <button class="dash-btn" id="suggestBtn" onclick="generateSuggestQuestions()" style="display:none;background:#f0fdf4;border-color:#86efac;color:#166534">💡 分析依頼プロンプトを作成</button>
       </div>
 
       <!-- Request -->
       <label for="requestText">分析依頼</label>
+      <!-- AI提案チップ（ダッシュボード表示後に表示） -->
+      <div id="aiSuggestSection" style="display:none;margin-bottom:6px">
+        <div style="font-size:11px;color:#6b7280;margin-bottom:4px;font-weight:600">💡 AIが提案する問い</div>
+        <div class="chips" id="aiSuggestChips"></div>
+      </div>
       <div class="chips" id="sampleChips">
         <span class="chip" onclick="setChip(this)">CVR低下の原因を調べる</span>
         <span class="chip" onclick="setChip(this)">チャネル別パフォーマンス比較</span>
@@ -295,6 +303,10 @@
       </div>
       <textarea id="requestText" placeholder="例: CVRが先月比で低下している。チャネル別・デバイス別に原因を探りたい"></textarea>
 
+      <label style="display:flex;align-items:center;gap:6px;margin:10px 0 6px;cursor:pointer;font-size:13px;color:var(--muted)">
+        <input type="checkbox" id="includeMarketing" checked style="width:auto;margin:0;cursor:pointer" />
+        <span>📚 マーケターのアドバイスを含める</span>
+      </label>
       <button class="run-btn" id="runBtn" onclick="startAnalysis()">
         <span id="btnIcon">▶</span>
         <span id="btnLabel">分析を開始する</span>
@@ -326,7 +338,7 @@
     <!-- タブバー（レポート到着後に表示） -->
     <div class="tabs" id="reportTabBar" style="display:none; margin-bottom:20px;">
       <button class="tab active" onclick="switchReportTab('report')">📊 分析レポート</button>
-      <button class="tab" onclick="switchReportTab('marketing')">📚 マーケターのアドバイス</button>
+      <button class="tab" id="marketingTabBtn" onclick="switchReportTab('marketing')">📚 マーケターのアドバイス</button>
       <button class="tab" id="dashboardTabBtn" onclick="switchReportTab('dashboard')" style="display:none">📈 ダッシュボード</button>
     </div>
 
@@ -542,6 +554,7 @@
 
   // ---- Dashboard ----
   let _dashCharts = [];
+  let _lastDashboardData = null;
 
   async function showDashboard() {
     const pid = document.getElementById('propertyId').value;
@@ -571,9 +584,47 @@
       const res = await fetch(`/api/ga4/dashboard?property_id=${encodeURIComponent(pid)}&start_date=${start}&end_date=${end}`);
       if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       const d = await res.json();
+      _lastDashboardData = d;
       _renderDashboard(tabCon, d);
+      // 「分析依頼プロンプトを作成」ボタンを表示
+      document.getElementById('suggestBtn').style.display = '';
     } catch(e) {
       tabCon.innerHTML = `<div class="dash-card"><p style="color:#dc2626;font-size:13px">エラー: ${e.message}</p></div>`;
+    }
+  }
+
+  async function generateSuggestQuestions() {
+    if (!_lastDashboardData) { alert('先にダッシュボードを表示してください'); return; }
+    const btn = document.getElementById('suggestBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 問いを生成中...';
+    try {
+      const res = await fetch('/api/ga4/suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dashboard_data: _lastDashboardData }),
+      });
+      if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      const data = await res.json();
+      const questions = data.questions || [];
+      if (questions.length === 0) { alert('問いを生成できませんでした'); return; }
+      // AI提案チップを生成
+      const chips = document.getElementById('aiSuggestChips');
+      chips.innerHTML = '';
+      questions.forEach(q => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.style.cssText = 'background:#f0fdf4;border-color:#86efac;color:#166534';
+        chip.textContent = q;
+        chip.onclick = () => setChip(chip);
+        chips.appendChild(chip);
+      });
+      document.getElementById('aiSuggestSection').style.display = '';
+    } catch(e) {
+      alert('問いの生成に失敗しました: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '💡 分析依頼プロンプトを作成';
     }
   }
 
@@ -801,7 +852,7 @@
   }
 
   // ── Steps ──
-  const ICONS = { idle: '○', running: '⟳', done: '✓', error: '✗' };
+  const ICONS = { idle: '○', running: '⟳', done: '✓', error: '✗', skipped: '—' };
   function setStep(n, status, msg) {
     const el = document.getElementById(`step${n}`);
     el.className = `step active ${status}`;
@@ -819,9 +870,11 @@
     if (currentTab === 'csv') {
       const file = csvInput.files[0];
       if (!file) { alert('CSV ファイルを選択してください'); return; }
+      const includeMarketing = document.getElementById('includeMarketing').checked;
       const formData = new FormData();
       formData.append('csv_file', file);
       formData.append('request_text', request);
+      formData.append('include_marketing', includeMarketing ? 'true' : 'false');
       const driveFolderId = document.getElementById('csvDriveFolderId').value;
       if (driveFolderId) formData.append('drive_folder_id', driveFolderId);
       fetchPromise = fetch('/api/analyze', { method: 'POST', body: formData });
@@ -832,11 +885,13 @@
       const startDate  = document.getElementById('startDate').value;
       const endDate    = document.getElementById('endDate').value;
       if (!propertyId || !startDate || !endDate) { alert('プロパティと期間を選択してください'); return; }
+      const includeMarketing = document.getElementById('includeMarketing').checked;
       const formData = new FormData();
       formData.append('property_id', propertyId);
       formData.append('start_date', startDate);
       formData.append('end_date', endDate);
       formData.append('request_text', request);
+      formData.append('include_marketing', includeMarketing ? 'true' : 'false');
       // 比較期間
       const compToggle = document.getElementById('compToggle');
       if (compToggle && compToggle.checked) {
@@ -850,11 +905,13 @@
     }
 
     // Reset UI
+    const _inclMkt = document.getElementById('includeMarketing').checked;
     currentReportFilename = '';
     document.getElementById('emptyState').style.display = 'none';
     document.getElementById('reportPanel').style.display = 'none';
     document.getElementById('reportTabBar').style.display = 'none';
-    document.getElementById('marketingPending').style.display = '';
+    document.getElementById('marketingPending').style.display = _inclMkt ? '' : 'none';
+    document.getElementById('marketingTabBtn').style.display = _inclMkt ? '' : 'none';
     document.getElementById('marketingAdviceSection').style.display = 'none';
     document.getElementById('marketingProposalsSection').style.display = 'none';
     document.getElementById('marketingAdviceContent').innerHTML = '';
@@ -862,7 +919,7 @@
     switchReportTab('report');
     document.getElementById('progressCard').style.display = '';
     document.getElementById('parsedInfo').style.display = 'none';
-    [1,2,3,4].forEach(n => setStep(n, 'idle', '待機中'));
+    [1,2,3,4,5,6].forEach(n => setStep(n, 'idle', '待機中'));
 
     const btn = document.getElementById('runBtn');
     btn.disabled = true;
