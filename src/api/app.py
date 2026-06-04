@@ -830,41 +830,29 @@ async def ga4_dashboard(
     property_id: str,
     start_date: str,
     end_date: str,
+    comp_start_date: str = "",
+    comp_end_date: str = "",
     session_id: str = Cookie(default=""),
 ) -> JSONResponse:
-    """GA4 データをダッシュボード用に集計して返す。"""
+    """GA4 データをダッシュボード用に集計して返す。比較期間オプション付き。"""
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=401, detail="ログインが必要です")
     access_token = session.get("access_token", "")
     refresh_token = session.get("refresh_token", "")
 
-    def _fetch(dims, mets, limit=0):
+    def _fetch(dims, mets, s_date, e_date, limit=0):
         nonlocal access_token
         try:
-            return _ga4_run_report(property_id, access_token, dims, mets, start_date, end_date, limit)
+            return _ga4_run_report(property_id, access_token, dims, mets, s_date, e_date, limit)
         except Exception:
             if not refresh_token:
                 raise
             access_token = refresh_access_token(refresh_token)
             update_access_token(session_id, access_token)
-            return _ga4_run_report(property_id, access_token, dims, mets, start_date, end_date, limit)
+            return _ga4_run_report(property_id, access_token, dims, mets, s_date, e_date, limit)
 
-    try:
-        # 日別推移（折れ線グラフ用）
-        daily = _fetch(
-            ["date"],
-            ["activeUsers", "sessions", "screenPageViews", "totalRevenue"],
-        )
-        # 日付昇順ソート（GA4は "20250101" 形式）
-        daily.sort(key=lambda r: r.get("date", ""))
-
-        # チャネル別（棒グラフ用）
-        channels_raw = _fetch(
-            ["sessionDefaultChannelGroup"],
-            ["sessions", "transactions", "totalRevenue"],
-        )
-        # チャネルのマッピング（参考リポジトリ準拠）
+    def _agg_channels(raw):
         ch_map = {
             "Cross-network": "広告", "Paid Search": "広告", "Display": "広告",
             "Paid Social": "広告", "Paid Other": "広告", "Paid Video": "広告",
@@ -873,37 +861,48 @@ async def ga4_dashboard(
             "Organic Shopping": "自然検索",
         }
         agg: dict = {}
-        for r in channels_raw:
+        for r in raw:
             ch = ch_map.get(r["sessionDefaultChannelGroup"], r["sessionDefaultChannelGroup"])
             if ch not in agg:
                 agg[ch] = {"channel": ch, "sessions": 0, "transactions": 0, "totalRevenue": 0.0}
             agg[ch]["sessions"] += r.get("sessions", 0)
             agg[ch]["transactions"] += r.get("transactions", 0)
             agg[ch]["totalRevenue"] += r.get("totalRevenue", 0.0)
-        channels = sorted(agg.values(), key=lambda x: -x["sessions"])
+        return sorted(agg.values(), key=lambda x: -x["sessions"])
+
+    try:
+        has_comp = bool(comp_start_date and comp_end_date)
+
+        # 日別推移（折れ線グラフ用）
+        daily = _fetch(["date"], ["activeUsers", "sessions", "screenPageViews", "totalRevenue"], start_date, end_date)
+        daily.sort(key=lambda r: r.get("date", ""))
+
+        # チャネル別
+        channels = _agg_channels(_fetch(["sessionDefaultChannelGroup"], ["sessions", "transactions", "totalRevenue"], start_date, end_date))
+
+        # 比較期間データ
+        comp_daily: list[dict] = []
+        comp_channels: list[dict] = []
+        if has_comp:
+            comp_daily = _fetch(["date"], ["activeUsers", "sessions", "screenPageViews", "totalRevenue"], comp_start_date, comp_end_date)
+            comp_daily.sort(key=lambda r: r.get("date", ""))
+            comp_channels = _agg_channels(_fetch(["sessionDefaultChannelGroup"], ["sessions", "transactions", "totalRevenue"], comp_start_date, comp_end_date))
 
         # 商品TOP10（売上順）
         products: list[dict] = []
         try:
-            prod_raw = _fetch(
-                ["itemName"],
-                ["itemRevenue", "itemsPurchased"],
-                limit=50,
-            )
+            prod_raw = _fetch(["itemName"], ["itemRevenue", "itemsPurchased"], start_date, end_date, limit=50)
             products = sorted(
                 [r for r in prod_raw if r.get("itemRevenue", 0) > 0],
                 key=lambda x: -x.get("itemRevenue", 0),
             )[:10]
         except Exception:
-            pass  # 商品データなし（EC機能未設定）
+            pass
 
         # 直帰率の高いページTOP10
         bounce_pages: list[dict] = []
         try:
-            bounce_raw = _fetch(
-                ["pagePath", "pageTitle"],
-                ["screenPageViews", "sessions", "engagedSessions"],
-            )
+            bounce_raw = _fetch(["pagePath", "pageTitle"], ["screenPageViews", "sessions", "engagedSessions"], start_date, end_date)
             for r in bounce_raw:
                 s = r.get("sessions", 0)
                 e = r.get("engagedSessions", 0)
@@ -922,6 +921,8 @@ async def ga4_dashboard(
             "channels": channels,
             "products": products,
             "bounce_pages": bounce_pages,
+            "comp_daily": comp_daily,
+            "comp_channels": comp_channels,
         })
 
     except Exception as e:

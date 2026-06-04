@@ -580,8 +580,17 @@
     _dashCharts.forEach(c => c.destroy());
     _dashCharts = [];
 
+    // 比較期間パラメータ
+    const compToggle = document.getElementById('compToggle');
+    let compParams = '';
+    if (compToggle && compToggle.checked) {
+      const cs = document.getElementById('compStartDate').value;
+      const ce = document.getElementById('compEndDate').value;
+      if (cs && ce) compParams = `&comp_start_date=${cs}&comp_end_date=${ce}`;
+    }
+
     try {
-      const res = await fetch(`/api/ga4/dashboard?property_id=${encodeURIComponent(pid)}&start_date=${start}&end_date=${end}`);
+      const res = await fetch(`/api/ga4/dashboard?property_id=${encodeURIComponent(pid)}&start_date=${start}&end_date=${end}${compParams}`);
       if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       const d = await res.json();
       _lastDashboardData = d;
@@ -645,23 +654,39 @@
 
   function _renderDashboard(con, d) {
     const { daily, channels, products, bounce_pages } = d;
+    const compDaily    = d.comp_daily    || [];
+    const compChannels = d.comp_channels || [];
+    const hasComp = compDaily.length > 0;
 
     // KPI合計
-    const totSessions  = daily.reduce((a,r) => a + (r.sessions||0), 0);
-    const totUsers     = daily.reduce((a,r) => a + (r.activeUsers||0), 0);
-    const totPV        = daily.reduce((a,r) => a + (r.screenPageViews||0), 0);
-    const totRevenue   = daily.reduce((a,r) => a + (r.totalRevenue||0), 0);
+    const totSessions = daily.reduce((a,r) => a + (r.sessions||0), 0);
+    const totUsers    = daily.reduce((a,r) => a + (r.activeUsers||0), 0);
+    const totPV       = daily.reduce((a,r) => a + (r.screenPageViews||0), 0);
+    const totRevenue  = daily.reduce((a,r) => a + (r.totalRevenue||0), 0);
+
+    // 比較KPI合計
+    const cSessions = compDaily.reduce((a,r) => a + (r.sessions||0), 0);
+    const cUsers    = compDaily.reduce((a,r) => a + (r.activeUsers||0), 0);
+    const cPV       = compDaily.reduce((a,r) => a + (r.screenPageViews||0), 0);
+    const cRevenue  = compDaily.reduce((a,r) => a + (r.totalRevenue||0), 0);
+
+    function _diff(curr, comp) {
+      if (!hasComp || comp === 0) return '';
+      const pct = ((curr - comp) / comp * 100).toFixed(1);
+      const up = curr >= comp;
+      return `<div style="font-size:11px;color:${up?'#10b981':'#ef4444'};margin-top:2px">${up?'▲':'▼'}${Math.abs(pct)}% vs 比較期間</div>`;
+    }
 
     con.innerHTML = `
       <div class="kpi-grid">
-        <div class="kpi-item"><div class="kpi-label">セッション</div><div class="kpi-value">${_fmt(totSessions)}</div></div>
-        <div class="kpi-item"><div class="kpi-label">ユーザー数</div><div class="kpi-value">${_fmt(totUsers)}</div></div>
-        <div class="kpi-item"><div class="kpi-label">ページビュー</div><div class="kpi-value">${_fmt(totPV)}</div></div>
-        <div class="kpi-item"><div class="kpi-label">売上</div><div class="kpi-value">${_fmtYen(totRevenue)}</div></div>
+        <div class="kpi-item"><div class="kpi-label">セッション</div><div class="kpi-value">${_fmt(totSessions)}</div>${_diff(totSessions,cSessions)}</div>
+        <div class="kpi-item"><div class="kpi-label">ユーザー数</div><div class="kpi-value">${_fmt(totUsers)}</div>${_diff(totUsers,cUsers)}</div>
+        <div class="kpi-item"><div class="kpi-label">ページビュー</div><div class="kpi-value">${_fmt(totPV)}</div>${_diff(totPV,cPV)}</div>
+        <div class="kpi-item"><div class="kpi-label">売上</div><div class="kpi-value">${_fmtYen(totRevenue)}</div>${_diff(totRevenue,cRevenue)}</div>
       </div>
 
       <div class="dash-card">
-        <div class="dash-card-title">日別推移</div>
+        <div class="dash-card-title">日別推移${hasComp?' （実線: 対象期間 ／ 破線: 比較期間）':''}</div>
         <canvas id="dashTabLineChart" class="dash-chart"></canvas>
       </div>
 
@@ -689,34 +714,43 @@
       </div>` : ''}
     `;
 
-    // 折れ線グラフ（セッション + ユーザー）
+    // 折れ線グラフ（セッション + ユーザー、比較対応）
     const lineCtx = document.getElementById('dashTabLineChart');
     if (lineCtx && daily.length) {
       const labels = daily.map(r => _ga4date(r.date));
+      // 比較期間は日付インデックスで合わせる（期間長が異なっても対応）
+      const datasets = [
+        { label: 'セッション', data: daily.map(r=>r.sessions||0), borderColor:'#4f46e5', backgroundColor:'rgba(79,70,229,.08)', tension:.3, pointRadius:2, fill:true },
+        { label: 'ユーザー',   data: daily.map(r=>r.activeUsers||0), borderColor:'#10b981', backgroundColor:'transparent', tension:.3, pointRadius:2 },
+      ];
+      if (hasComp) {
+        datasets.push({ label: 'セッション(比較)', data: compDaily.map(r=>r.sessions||0), borderColor:'#a5b4fc', backgroundColor:'transparent', tension:.3, pointRadius:2, borderDash:[4,3] });
+        datasets.push({ label: 'ユーザー(比較)',   data: compDaily.map(r=>r.activeUsers||0), borderColor:'#6ee7b7', backgroundColor:'transparent', tension:.3, pointRadius:2, borderDash:[4,3] });
+      }
       _dashCharts.push(new Chart(lineCtx, {
         type: 'line',
-        data: {
-          labels,
-          datasets: [
-            { label: 'セッション', data: daily.map(r=>r.sessions||0), borderColor:'#4f46e5', backgroundColor:'rgba(79,70,229,.08)', tension:.3, pointRadius:2, fill:true },
-            { label: 'ユーザー',   data: daily.map(r=>r.activeUsers||0), borderColor:'#10b981', backgroundColor:'transparent', tension:.3, pointRadius:2 },
-          ]
-        },
+        data: { labels, datasets },
         options: { responsive:true, plugins:{ legend:{ labels:{ font:{size:11} } } }, scales:{ x:{ ticks:{ font:{size:10}, maxTicksLimit:14 } }, y:{ ticks:{ font:{size:10} }, beginAtZero:true } } }
       }));
     }
 
-    // 棒グラフ（チャネル別）
+    // 棒グラフ（チャネル別、比較時はグループ化）
     const barCtx = document.getElementById('dashTabBarChart');
     if (barCtx && channels.length) {
       const colors = ['#4f46e5','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#64748b'];
+      const allLabels = [...new Set([...channels.map(c=>c.channel), ...compChannels.map(c=>c.channel)])];
+      const mainData = allLabels.map(ch => (channels.find(c=>c.channel===ch)||{sessions:0}).sessions);
+      const barDatasets = [
+        { label: 'セッション', data: mainData, backgroundColor: allLabels.map((_,i)=>colors[i%colors.length]) }
+      ];
+      if (hasComp) {
+        const compData = allLabels.map(ch => (compChannels.find(c=>c.channel===ch)||{sessions:0}).sessions);
+        barDatasets.push({ label: 'セッション(比較)', data: compData, backgroundColor: allLabels.map((_,i)=>colors[i%colors.length]+'80') });
+      }
       _dashCharts.push(new Chart(barCtx, {
         type: 'bar',
-        data: {
-          labels: channels.map(c=>c.channel),
-          datasets: [{ label: 'セッション', data: channels.map(c=>c.sessions), backgroundColor: channels.map((_,i)=>colors[i%colors.length]) }]
-        },
-        options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ font:{size:11} } }, y:{ ticks:{ font:{size:10} }, beginAtZero:true } } }
+        data: { labels: allLabels, datasets: barDatasets },
+        options: { responsive:true, plugins:{ legend:{ display: hasComp, labels:{ font:{size:11} } } }, scales:{ x:{ ticks:{ font:{size:11} } }, y:{ ticks:{ font:{size:10} }, beginAtZero:true } } }
       }));
     }
   }
