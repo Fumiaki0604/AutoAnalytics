@@ -106,7 +106,7 @@ class GA4Adapter:
                     metrics=[Metric(name=m) for m in mets],
                     date_ranges=[DateRange(start_date=range_start, end_date=range_end)],
                 )
-                resp = self.client.run_report(req)
+                resp = self.client.run_report(req, timeout=120)
                 for row in resp.rows:
                     record: dict = {}
                     for i, dim in enumerate(dims):
@@ -127,7 +127,7 @@ class GA4Adapter:
                 metrics=[Metric(name=m) for m in mets],
                 date_ranges=[DateRange(start_date=start_date, end_date=end_date)],
             )
-            response = self.client.run_report(request)
+            response = self.client.run_report(request, timeout=120)
             rows = []
             for row in response.rows:
                 record = {}

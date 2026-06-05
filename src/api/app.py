@@ -809,7 +809,7 @@ def _ga4_run_report(
         date_ranges=[DateRange(start_date=start_date, end_date=end_date)],
         limit=limit if limit > 0 else 10000,
     )
-    resp = client.run_report(req)
+    resp = client.run_report(req, timeout=120)
     rows = []
     for row in resp.rows:
         record: dict = {}
