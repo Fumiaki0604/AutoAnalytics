@@ -373,11 +373,96 @@ def _load_supplement_to_duckdb(db, filename: str, content: bytes) -> str:
     return f"補足データ '{filename}': {len(df):,}行 × {len(df.columns)}列（{cols_preview}）"
 
 
-def _select_ga4_dimensions(request_text: str, has_comparison: bool = False) -> tuple[list[str], list[str]]:
-    """ユーザー依頼からGA4取得ディメンション・メトリクスをLLMで動的選択する。"""
+# CV系メトリクス：未設定だと0になる旨の警告
+_CV_METRICS_WARNINGS: dict[str, str] = {
+    "conversions": "※ GA4管理画面でコンバージョン設定が必要。未設定の場合0になる",
+    "totalRevenue": "※ ECイベント計測が実装されている場合のみ有効",
+    "purchaseRevenue": "※ ECイベント計測が実装されている場合のみ有効",
+    "ecommercePurchases": "※ ECイベント計測が実装されている場合のみ有効（purchase イベント）",
+    "transactions": "※ ECイベント計測が実装されている場合のみ有効",
+    "itemRevenue": "※ アイテムスコープのEC計測が必要",
+}
+
+
+def _get_ga4_metadata(property_id: str, access_token: str) -> Optional[dict]:
+    """GA4 getMetadata API でプロパティ固有の dim/met 一覧を取得する（24h Supabase キャッシュ付き）。
+    失敗時は None を返す（呼び出し元は静的スキーマへフォールバック）。
+    """
+    from src.storage.ga4_metadata_store import get_cached_metadata, save_metadata
+
+    cached = get_cached_metadata(property_id)
+    if cached:
+        return cached
+
+    try:
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient
+        from google.oauth2.credentials import Credentials as GoogleCredentials
+
+        creds = GoogleCredentials(token=access_token)
+        client = BetaAnalyticsDataClient(credentials=creds)
+        meta = client.get_metadata(name=f"properties/{property_id}/metadata")
+
+        dims = [
+            {"apiName": d.api_name, "uiName": d.ui_name}
+            for d in meta.dimensions
+            if not d.blocked_reasons
+        ]
+        mets = [
+            {"apiName": m.api_name, "uiName": m.ui_name}
+            for m in meta.metrics
+            if not m.blocked_reasons
+        ]
+
+        save_metadata(property_id, dims, mets)
+        return {"dimensions": dims, "metrics": mets}
+    except Exception:
+        return None
+
+
+def _format_metadata_for_llm(dims: list[dict], mets: list[dict]) -> str:
+    """メタデータをLLMが解釈しやすいMarkdown文字列に整形する。CV系メトリクスに警告注記を付与。"""
+    lines = ["## このプロパティで利用可能なディメンション"]
+    for d in dims:
+        lines.append(f"- `{d['apiName']}` — {d.get('uiName', '')}")
+
+    lines.append("\n## このプロパティで利用可能なメトリクス")
+    for m in mets:
+        api_name = m["apiName"]
+        warn = _CV_METRICS_WARNINGS.get(api_name, "")
+        note = f" {warn}" if warn else ""
+        lines.append(f"- `{api_name}` — {m.get('uiName', '')}{note}")
+
+    return "\n".join(lines)
+
+
+def _select_ga4_dimensions(
+    request_text: str,
+    has_comparison: bool = False,
+    property_id: str = "",
+    access_token: str = "",
+) -> tuple[list[str], list[str]]:
+    """ユーザー依頼からGA4取得ディメンション・メトリクスをLLMで動的選択する。
+    property_id / access_token が渡された場合はプロパティ固有のメタデータを使用し、
+    LLM出力をメタデータ内の項目のみに絞り込む。失敗時は静的スキーマにフォールバック。
+    """
     from src.adapters.ga4_adapter import DEFAULT_DIMENSIONS, DEFAULT_METRICS
-    schema = _load_prompt("ga4_dimensions.md")
+
     max_dims = 8
+
+    # 動的メタデータ取得（失敗時は None → 静的スキーマへフォールバック）
+    metadata = None
+    if property_id and access_token:
+        metadata = _get_ga4_metadata(property_id, access_token)
+
+    if metadata:
+        schema = _format_metadata_for_llm(metadata["dimensions"], metadata["metrics"])
+        valid_dims: Optional[set[str]] = {d["apiName"] for d in metadata["dimensions"]}
+        valid_mets: Optional[set[str]] = {m["apiName"] for m in metadata["metrics"]}
+    else:
+        schema = _load_prompt("ga4_dimensions.md")
+        valid_dims = None
+        valid_mets = None
+
     prompt = f"""以下のGA4分析依頼に必要なディメンションとメトリクスを選択してください。
 
 ## 分析依頼
@@ -387,8 +472,9 @@ def _select_ga4_dimensions(request_text: str, has_comparison: bool = False) -> t
 - ディメンション: dateを必ず含め、依頼に関連するものを最大{max_dims}つ選ぶ（dateRangeは含めない）
 - メトリクス: 依頼に関連するものを最大10個選ぶ
 - 余計なものは含めない（APIコスト削減のため）
+- conversions は GA4管理画面でのコンバージョン設定が必要なため、購入・CVRの分析には ecommercePurchases または transactions を優先すること
 
-## 利用可能なディメンション・メトリクス
+## 利用可能なディメンション・メトリクス（このプロパティ固有）
 {schema}
 
 ## 出力形式（JSONのみ、説明不要）
@@ -411,6 +497,16 @@ def _select_ga4_dimensions(request_text: str, has_comparison: bool = False) -> t
         # dateは必ず含める
         if "date" not in dims:
             dims = ["date"] + dims
+        # メタデータ外の項目を除去（動的メタデータがある場合のみ）
+        if valid_dims is not None:
+            dims = [d for d in dims if d in valid_dims or d == "date"]
+        if valid_mets is not None:
+            mets = [m for m in mets if m in valid_mets]
+        # 除去後に空になった場合はデフォルトへフォールバック
+        if not dims:
+            dims = DEFAULT_DIMENSIONS
+        if not mets:
+            mets = DEFAULT_METRICS
         return dims[:max_dims], mets[:10]
     return DEFAULT_DIMENSIONS, DEFAULT_METRICS
 
@@ -642,7 +738,12 @@ def _run_ga4_analysis(
 
             # Step 1: GA4 データ取得（トークンリフレッシュ対応）
             emit({"step": 1, "status": "running", "message": "GA4 からデータを取得中..."})
-            dims, mets = _select_ga4_dimensions(request_text, has_comparison=has_comparison)
+            dims, mets = _select_ga4_dimensions(
+                request_text,
+                has_comparison=has_comparison,
+                property_id=property_id,
+                access_token=access_token,
+            )
             try:
                 meta = GA4Adapter(db, access_token).load(
                     property_id, start_date, end_date,
