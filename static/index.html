@@ -1204,7 +1204,12 @@
   });
   document.getElementById('compToggle').addEventListener('change', _onDateChange);
   document.getElementById('propertyId').addEventListener('change', () => {
-    if (_lastDashboardData) showDashboard();
+    // プロパティ変更時: 入力・AI提案をリセット
+    document.getElementById('requestText').value = '';
+    document.getElementById('aiSuggestSection').style.display = 'none';
+    document.getElementById('aiSuggestChips').innerHTML = '';
+    document.getElementById('suggestBtn').style.display = 'none';
+    _lastDashboardData = null;
   });
 </script>
 </body>
