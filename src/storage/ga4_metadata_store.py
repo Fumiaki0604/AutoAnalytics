@@ -42,5 +42,5 @@ def save_metadata(property_id: str, dimensions: list[dict], metrics: list[dict])
             "metrics": metrics,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[save_metadata ERROR] property={property_id}: {e}")

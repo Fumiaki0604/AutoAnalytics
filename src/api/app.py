@@ -415,7 +415,9 @@ def _get_ga4_metadata(property_id: str, access_token: str) -> Optional[dict]:
 
         save_metadata(property_id, dims, mets)
         return {"dimensions": dims, "metrics": mets}
-    except Exception:
+    except Exception as e:
+        import traceback
+        print(f"[getMetadata ERROR] property={property_id}: {e}\n{traceback.format_exc()}")
         return None
 
 
