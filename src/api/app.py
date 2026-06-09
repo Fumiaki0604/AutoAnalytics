@@ -405,12 +405,12 @@ def _get_ga4_metadata(property_id: str, access_token: str) -> Optional[dict]:
         dims = [
             {"apiName": d.api_name, "uiName": d.ui_name}
             for d in meta.dimensions
-            if not d.blocked_reasons
+            if not getattr(d, "blocked_reasons", [])
         ]
         mets = [
             {"apiName": m.api_name, "uiName": m.ui_name}
             for m in meta.metrics
-            if not m.blocked_reasons
+            if not getattr(m, "blocked_reasons", [])
         ]
 
         save_metadata(property_id, dims, mets)
