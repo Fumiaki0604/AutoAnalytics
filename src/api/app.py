@@ -462,8 +462,10 @@ def _select_ga4_dimensions(
         valid_mets: Optional[set[str]] = {m["apiName"] for m in metadata["metrics"]}
     else:
         schema = _load_prompt("ga4_dimensions.md")
-        valid_dims = None
-        valid_mets = None
+        # 静的スキーマからバックティック内のAPI名を抽出し、幻覚メトリクス名を除去する
+        _all_static = set(re.findall(r"`([a-zA-Z][a-zA-Z0-9]+)`", schema))
+        valid_dims = _all_static
+        valid_mets = _all_static
 
     prompt = f"""以下のGA4分析依頼に必要なディメンションとメトリクスを選択してください。
 

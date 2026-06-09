@@ -83,10 +83,13 @@
 - `screenPageViewsPerSession` — セッションあたりPV数
 
 ### コンバージョン・売上
-- `conversions` — コンバージョン数★
+- `conversions` — コンバージョン数（GA4管理画面での設定が必要。未設定は0）
+- `sessionConversionRate` — セッションコンバージョン率★（CVR分析に使う）
+- `userConversionRate` — ユーザーコンバージョン率
 - `totalRevenue` — 総売上★
 - `purchaseRevenue` — 購入売上
-- `ecommercePurchases` — 購入件数
+- `ecommercePurchases` — 購入件数（ECイベント計測が必要）
+- `transactions` — トランザクション数（ECイベント計測が必要）
 - `addToCarts` — カート追加数
 - `checkouts` — チェックアウト数
 - `cartToViewRate` — カート追加率
