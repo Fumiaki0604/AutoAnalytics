@@ -1,5 +1,28 @@
 # GA4 APIディメンション・メトリクス 正式名称リファレンス
 
+## 【最重要】日本語ビジネス用語 → GA4 APIname 対応表
+
+> LLMはこの表を最優先で参照し、ユーザーの依頼文中の日本語を正しいAPIname に変換すること。
+
+| ユーザーがよく使う表現 | 使うべきAPIname | 禁止・注意 |
+|---|---|---|
+| CV数・コンバージョン数・購入数 | `ecommercePurchases` または `transactions` | `conversions`は管理画面設定必須のため原則使わない |
+| CVR・コンバージョン率・CV率 | `sessionConversionRate` | `conversionRate`という名前は**存在しない** |
+| 売上・収益・Revenue | `totalRevenue` | ECイベント計測が必要 |
+| 参照元/メディア・流入元 | `sessionSourceMedium` | `sourceMedium`や`medium`と混同しない |
+| チャネル・流入チャネル | `sessionDefaultChannelGroup` | |
+| 直帰率・バウンス率 | `bounceRate` | |
+| エンゲージメント率 | `engagementRate` | |
+| PV・ページビュー | `screenPageViews` | |
+| セッション数 | `sessions` | |
+| ユーザー数・UU | `activeUsers` または `totalUsers` | |
+| 新規ユーザー | `newUsers` | |
+| 平均滞在時間・セッション時間 | `averageSessionDuration` | |
+| カート追加 | `addToCarts` | |
+| 商品別売上 | `itemRevenue`（ディメンション: `itemName`） | ECイベント計測が必要 |
+
+---
+
 ## 【重要】参照元・メディア系ディメンション（名称が紛らわしいため注意）
 
 | 用途 | 正式API名 | 説明 |
