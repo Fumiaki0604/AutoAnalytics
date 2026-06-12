@@ -1356,5 +1356,96 @@ async def download_report(filename: str) -> FileResponse:
     return FileResponse(path, media_type="text/markdown", filename=filename)
 
 
+# ------------------------------------------------------------------
+# 時系列予測（Prophet API プロキシ）
+# ------------------------------------------------------------------
+
+_FORECAST_API_URL = "https://ga4-forecast-api.onrender.com"
+_FORECAST_METRIC_LABELS: dict[str, str] = {
+    "sessions": "セッション数",
+    "activeUsers": "アクティブユーザー数",
+    "totalRevenue": "売上",
+    "screenPageViews": "ページビュー",
+}
+
+
+@app.get("/api/ga4/forecast")
+async def ga4_forecast(
+    property_id: str,
+    start_date: str,
+    end_date: str,
+    metric: str = "sessions",
+    periods: int = 30,
+    session_id: str = Cookie(default=""),
+) -> JSONResponse:
+    """GA4日別データをProphet予測APIに渡し、最大90日先の予測を返す。"""
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="ログインが必要です")
+    access_token = session.get("access_token", "")
+    refresh_token = session.get("refresh_token", "")
+
+    if metric not in _FORECAST_METRIC_LABELS:
+        raise HTTPException(status_code=400, detail=f"metric は {list(_FORECAST_METRIC_LABELS)} のいずれかを指定してください")
+    if not (1 <= periods <= 90):
+        raise HTTPException(status_code=400, detail="periods は 1〜90 の範囲で指定してください")
+
+    # GA4 日別データ取得（トークンリフレッシュ対応）
+    try:
+        daily = _ga4_run_report(property_id, access_token, ["date"], [metric], start_date, end_date)
+    except Exception:
+        if not refresh_token:
+            raise HTTPException(status_code=502, detail="GA4データ取得に失敗しました")
+        access_token = refresh_access_token(refresh_token)
+        update_access_token(session_id, access_token)
+        try:
+            daily = _ga4_run_report(property_id, access_token, ["date"], [metric], start_date, end_date)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"GA4データ取得失敗: {e}")
+
+    daily.sort(key=lambda r: r.get("date", ""))
+
+    # YYYYMMDD → YYYY-MM-DD + DataPoint形式に変換
+    data_points: list[dict] = []
+    for r in daily:
+        d = r.get("date", "")
+        if len(d) == 8:
+            d = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+        data_points.append({"date": d, "value": float(r.get(metric) or 0)})
+
+    if len(data_points) < 7:
+        raise HTTPException(
+            status_code=400,
+            detail=f"予測には最低7日分のデータが必要です（現在 {len(data_points)} 日分）",
+        )
+
+    # forecast API 呼び出し
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(
+                f"{_FORECAST_API_URL}/forecast",
+                json={
+                    "data": data_points,
+                    "periods": periods,
+                    "metric_name": _FORECAST_METRIC_LABELS[metric],
+                },
+            )
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"予測APIエラー ({resp.status_code}): {resp.text[:300]}",
+            )
+        return JSONResponse(resp.json())
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail="予測APIがタイムアウトしました。Renderの起動に時間がかかっている可能性があります。しばらく後に再実行してください。",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"予測API接続エラー: {e}")
+
+
 # Static files（最後にマウント: / より後で定義しないとルートが上書きされる）
 app.mount("/static", StaticFiles(directory="static"), name="static")

@@ -284,6 +284,7 @@
         </div>
         <button class="dash-btn" onclick="showDashboard()">📊 ダッシュボードを表示する</button>
         <button class="dash-btn" id="suggestBtn" onclick="generateSuggestQuestions()" style="display:none;background:#f0fdf4;border-color:#86efac;color:#166534">💡 分析依頼プロンプトを作成</button>
+        <button class="dash-btn" id="forecastBtn" onclick="showForecast()" style="display:none;background:#eff6ff;border-color:#93c5fd;color:#1d4ed8">📈 時系列予測</button>
       </div>
 
       <!-- Request -->
@@ -595,8 +596,9 @@
       const d = await res.json();
       _lastDashboardData = d;
       _renderDashboard(tabCon, d);
-      // 「分析依頼プロンプトを作成」ボタンを表示
+      // 「分析依頼プロンプトを作成」「時系列予測」ボタンを表示
       document.getElementById('suggestBtn').style.display = '';
+      document.getElementById('forecastBtn').style.display = '';
     } catch(e) {
       tabCon.innerHTML = `<div class="dash-card"><p style="color:#dc2626;font-size:13px">エラー: ${e.message}</p></div>`;
     }
@@ -712,6 +714,27 @@
           <tbody>${bounce_pages.map(p=>`<tr><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.pagePath}">${p.pagePath}</td><td style="text-align:right">${_fmt(p.sessions)}</td><td style="text-align:right">${(p.bounceRate*100).toFixed(1)}%</td></tr>`).join('')}</tbody>
         </table>
       </div>` : ''}
+
+      <div id="forecastChartSection" style="display:none" class="dash-card">
+        <div class="dash-card-title">時系列予測（Prophet）</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+          <select id="forecastMetric" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#374151">
+            <option value="sessions">セッション数</option>
+            <option value="activeUsers">ユーザー数</option>
+            <option value="totalRevenue">売上</option>
+            <option value="screenPageViews">PV数</option>
+          </select>
+          <input type="number" id="forecastPeriods" value="30" min="7" max="90"
+            style="width:56px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#374151">
+          <span style="font-size:12px;color:#6b7280">日先</span>
+          <button onclick="runForecast()"
+            style="padding:4px 14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;font-size:12px;color:#1d4ed8;cursor:pointer;font-weight:600">
+            実行
+          </button>
+        </div>
+        <div id="forecastStatus" style="font-size:12px;color:#6b7280;margin-bottom:6px;min-height:16px"></div>
+        <canvas id="forecastCanvas" class="dash-chart"></canvas>
+      </div>
     `;
 
     // 折れ線グラフ（セッション + ユーザー、比較対応）
@@ -754,6 +777,126 @@
       }));
     }
   }
+
+  // ---- Forecast ----
+  async function showForecast() {
+    const sec = document.getElementById('forecastChartSection');
+    if (!sec) return;
+    sec.style.display = '';
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    await runForecast();
+  }
+
+  async function runForecast() {
+    const pid   = document.getElementById('propertyId').value;
+    const start = document.getElementById('startDate').value;
+    const end   = document.getElementById('endDate').value;
+    const metric  = document.getElementById('forecastMetric')?.value  || 'sessions';
+    const periods = parseInt(document.getElementById('forecastPeriods')?.value || '30');
+    const statusEl = document.getElementById('forecastStatus');
+    const canvasEl = document.getElementById('forecastCanvas');
+    if (!pid || !start || !end || !statusEl || !canvasEl) return;
+
+    statusEl.textContent = '⏳ 予測中... 初回はRenderの起動に30〜60秒かかる場合があります';
+
+    // 既存予測チャートを破棄
+    _dashCharts = _dashCharts.filter(c => {
+      if (c.canvas && c.canvas.id === 'forecastCanvas') { c.destroy(); return false; }
+      return true;
+    });
+
+    try {
+      const res = await fetch(
+        `/api/ga4/forecast?property_id=${encodeURIComponent(pid)}&start_date=${start}&end_date=${end}&metric=${metric}&periods=${periods}`
+      );
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      statusEl.textContent = `✅ ${data.metric_name} の予測完了（${periods}日先）`;
+      _renderForecastChart(canvasEl, data);
+    } catch(e) {
+      statusEl.textContent = '❌ ' + e.message;
+    }
+  }
+
+  function _renderForecastChart(canvas, data) {
+    const { historical, forecast, metric_name } = data;
+    const histLabels = historical.map(r => r.date.slice(5));
+    const fcstLabels = forecast.map(r => r.date.slice(5));
+    const allLabels  = [...histLabels, ...fcstLabels];
+    const hLen = historical.length;
+    const nullHist = Array(hLen).fill(null);
+    const nullFcst = Array(forecast.length).fill(null);
+
+    const datasets = [
+      // 信頼区間（下限→上限 fill）
+      {
+        label: '信頼区間（±95%）',
+        data: [...nullHist, ...forecast.map(r => r.yhat_lower)],
+        borderColor: 'transparent',
+        backgroundColor: 'rgba(99,102,241,0.12)',
+        fill: '+1',
+        pointRadius: 0,
+        tension: 0.3,
+      },
+      {
+        label: '_upper',
+        data: [...nullHist, ...forecast.map(r => r.yhat_upper)],
+        borderColor: 'transparent',
+        backgroundColor: 'transparent',
+        fill: false,
+        pointRadius: 0,
+        tension: 0.3,
+      },
+      // 予測ライン（破線）
+      {
+        label: `${metric_name}（予測）`,
+        data: [...nullHist, ...forecast.map(r => r.yhat)],
+        borderColor: '#818cf8',
+        backgroundColor: 'transparent',
+        borderDash: [5, 3],
+        pointRadius: 0,
+        tension: 0.3,
+      },
+      // 実績ライン
+      {
+        label: `${metric_name}（実績）`,
+        data: [...historical.map(r => r.y ?? null), ...nullFcst],
+        borderColor: '#4f46e5',
+        backgroundColor: 'rgba(79,70,229,0.06)',
+        fill: true,
+        pointRadius: 2,
+        tension: 0.3,
+      },
+    ];
+
+    _dashCharts.push(new Chart(canvas, {
+      type: 'line',
+      data: { labels: allLabels, datasets },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            labels: {
+              filter: item => item.text !== '_upper',
+              font: { size: 11 },
+            },
+          },
+          tooltip: {
+            filter: item => item.dataset.label !== '_upper',
+          },
+        },
+        scales: {
+          x: { ticks: { font: { size: 10 }, maxTicksLimit: 20 } },
+          y: { ticks: { font: { size: 10 } }, beginAtZero: true },
+        },
+      },
+    }));
+  }
+  // ---- /Forecast ----
+
   // ---- /Dashboard ----
 
   function toggleCompPeriod() {
@@ -1209,6 +1352,7 @@
     document.getElementById('aiSuggestSection').style.display = 'none';
     document.getElementById('aiSuggestChips').innerHTML = '';
     document.getElementById('suggestBtn').style.display = 'none';
+    document.getElementById('forecastBtn').style.display = 'none';
     _lastDashboardData = null;
   });
 </script>
