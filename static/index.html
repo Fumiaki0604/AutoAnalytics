@@ -814,7 +814,12 @@
         throw new Error(e.detail || `HTTP ${res.status}`);
       }
       const data = await res.json();
-      statusEl.textContent = `✅ ${data.metric_name} の予測完了（${periods}日先）`;
+      const fcstTotal = data.forecast.reduce((s, r) => s + (r.predicted || 0), 0);
+      const isRevenue = metric === 'totalRevenue';
+      const totalStr = isRevenue
+        ? `¥${Math.round(fcstTotal).toLocaleString()}`
+        : Math.round(fcstTotal).toLocaleString();
+      statusEl.textContent = `✅ ${data.metric_name} の予測完了（${periods}日先）　予測合計: ${totalStr}`;
       _renderForecastChart(canvasEl, data);
     } catch(e) {
       statusEl.textContent = '❌ ' + e.message;
