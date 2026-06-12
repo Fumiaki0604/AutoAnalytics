@@ -834,7 +834,7 @@
       // 信頼区間（下限→上限 fill）
       {
         label: '信頼区間（±95%）',
-        data: [...nullHist, ...forecast.map(r => r.yhat_lower)],
+        data: [...nullHist, ...forecast.map(r => r.lower)],
         borderColor: 'transparent',
         backgroundColor: 'rgba(99,102,241,0.12)',
         fill: '+1',
@@ -843,7 +843,7 @@
       },
       {
         label: '_upper',
-        data: [...nullHist, ...forecast.map(r => r.yhat_upper)],
+        data: [...nullHist, ...forecast.map(r => r.upper)],
         borderColor: 'transparent',
         backgroundColor: 'transparent',
         fill: false,
@@ -853,7 +853,7 @@
       // 予測ライン（破線）
       {
         label: `${metric_name}（予測）`,
-        data: [...nullHist, ...forecast.map(r => r.yhat)],
+        data: [...nullHist, ...forecast.map(r => r.predicted)],
         borderColor: '#818cf8',
         backgroundColor: 'transparent',
         borderDash: [5, 3],
@@ -863,7 +863,7 @@
       // 実績ライン
       {
         label: `${metric_name}（実績）`,
-        data: [...historical.map(r => r.y ?? null), ...nullFcst],
+        data: [...historical.map(r => r.value ?? null), ...nullFcst],
         borderColor: '#4f46e5',
         backgroundColor: 'rgba(79,70,229,0.06)',
         fill: true,
