@@ -822,6 +822,9 @@
   }
 
   function _renderForecastChart(canvas, data) {
+    // 既存チャートをChart.js内部レジストリから確実に破棄
+    const existing = Chart.getChart(canvas);
+    if (existing) existing.destroy();
     const { historical, forecast, metric_name } = data;
     const histLabels = historical.map(r => r.date.slice(5));
     const fcstLabels = forecast.map(r => r.date.slice(5));
