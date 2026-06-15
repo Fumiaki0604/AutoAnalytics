@@ -1419,40 +1419,32 @@ async def ga4_forecast(
             detail=f"予測には最低7日分のデータが必要です（現在 {len(data_points)} 日分）",
         )
 
-    # forecast API 呼び出し（Render無料プランの起動待ち: 429/503 は最大3回リトライ）
+    # forecast API 呼び出し（フロントエンドのhealth pollでサーバー起動済みを確認済み）
     payload = {
         "data": data_points,
         "periods": periods,
         "metric_name": _FORECAST_METRIC_LABELS[metric],
     }
-    last_status = 0
-    for attempt in range(3):
-        if attempt > 0:
-            await asyncio.sleep(15 * attempt)  # 15s → 30s
-        try:
-            async with httpx.AsyncClient(timeout=90.0) as client:
-                resp = await client.post(f"{_FORECAST_API_URL}/forecast", json=payload)
-            last_status = resp.status_code
-            if resp.status_code == 200:
-                return JSONResponse(resp.json())
-            if resp.status_code in (429, 503):
-                continue  # Render 起動待ち → リトライ
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(f"{_FORECAST_API_URL}/forecast", json=payload)
+        if resp.status_code == 200:
+            return JSONResponse(resp.json())
+        if resp.status_code in (429, 503):
             raise HTTPException(
-                status_code=502,
-                detail=f"予測APIエラー ({resp.status_code}): {resp.text[:300]}",
+                status_code=503,
+                detail="予測サーバーが起動中です。ページの「準備完了」表示を確認してから実行してください。",
             )
-        except httpx.TimeoutException:
-            last_status = 504
-            continue
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"予測API接続エラー: {e}")
-
-    raise HTTPException(
-        status_code=504,
-        detail=f"予測APIが起動待ちです（{last_status}）。Renderの起動に1〜2分かかる場合があります。しばらく後に再実行してください。",
-    )
+        raise HTTPException(
+            status_code=502,
+            detail=f"予測APIエラー ({resp.status_code}): {resp.text[:300]}",
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="予測APIがタイムアウトしました。再度お試しください。")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"予測API接続エラー: {e}")
 
 
 @app.get("/api/ga4/forecast/warmup")

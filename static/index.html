@@ -727,8 +727,8 @@
           <input type="number" id="forecastPeriods" value="30" min="7" max="90"
             style="width:56px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#374151">
           <span style="font-size:12px;color:#6b7280">日先</span>
-          <button onclick="runForecast()"
-            style="padding:4px 14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;font-size:12px;color:#1d4ed8;cursor:pointer;font-weight:600">
+          <button id="forecastRunBtn" onclick="runForecast()" disabled
+            style="padding:4px 14px;background:#e5e7eb;border:1px solid #d1d5db;border-radius:6px;font-size:12px;color:#9ca3af;cursor:not-allowed;font-weight:600">
             実行
           </button>
         </div>
@@ -779,23 +779,58 @@
   }
 
   // ---- Forecast ----
+  const _FORECAST_HEALTH_URL = 'https://ga4-forecast-api.onrender.com/health';
+
   async function showForecast() {
     const sec = document.getElementById('forecastChartSection');
     if (!sec) return;
     sec.style.display = '';
     sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    // バックグラウンドでRenderサーバーをウォームアップ
+    _pollForecastHealth();
+  }
+
+  // ブラウザから直接ProphetAPIをポーリング（CORSは*で許可済み）
+  // エクスポネンシャルバックオフ: 5s→10s→20s→40s→80s
+  async function _pollForecastHealth() {
     const statusEl = document.getElementById('forecastStatus');
-    if (statusEl) statusEl.textContent = '⏳ 予測サーバーを起動中...';
-    fetch('/api/ga4/forecast/warmup').then(r => r.json()).then(d => {
-      if (statusEl && statusEl.textContent.startsWith('⏳')) {
-        statusEl.textContent = d.status === 'ready'
-          ? '✅ サーバー準備完了。「実行」を押してください。'
-          : '⏳ サーバー起動中（初回は1〜2分かかります）';
+    const btn = document.getElementById('forecastRunBtn');
+    const delays = [5000, 10000, 20000, 40000, 80000];
+    let attempt = 0;
+
+    const setStatus = (text, isReady) => {
+      if (statusEl) statusEl.textContent = text;
+      if (btn) {
+        btn.disabled = !isReady;
+        btn.style.background    = isReady ? '#eff6ff' : '#e5e7eb';
+        btn.style.borderColor   = isReady ? '#93c5fd' : '#d1d5db';
+        btn.style.color         = isReady ? '#1d4ed8' : '#9ca3af';
+        btn.style.cursor        = isReady ? 'pointer'  : 'not-allowed';
       }
-    }).catch(() => {
-      if (statusEl && statusEl.textContent.startsWith('⏳')) statusEl.textContent = '';
-    });
+    };
+
+    setStatus('⏳ 予測サーバーを起動中...', false);
+
+    const check = async () => {
+      try {
+        const res = await fetch(_FORECAST_HEALTH_URL, { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'healthy' || data.status === 'ok') {
+            setStatus('✅ サーバー準備完了。「実行」を押してください。', true);
+            return; // 完了
+          }
+        }
+      } catch (_) { /* CORSエラー or ネットワークエラー = まだ起動中 */ }
+
+      if (attempt < delays.length) {
+        setStatus(`⏳ 予測サーバーを起動中...（${attempt + 1}回目確認）`, false);
+        setTimeout(check, delays[attempt++]);
+      } else {
+        setStatus('⚠️ サーバー起動に時間がかかっています。しばらく後に再試行してください。', false);
+      }
+    };
+
+    check();
   }
 
   async function runForecast() {
