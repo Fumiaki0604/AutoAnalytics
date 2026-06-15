@@ -1455,5 +1455,17 @@ async def ga4_forecast(
     )
 
 
+@app.get("/api/ga4/forecast/warmup")
+async def ga4_forecast_warmup() -> JSONResponse:
+    """Render無料プランのコールドスタート対策: サーバーへpingを投げて起動を促す。
+    レスポンスは即座に返し、バックグラウンドでRenderが起動する。"""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{_FORECAST_API_URL}/")
+        return JSONResponse({"status": "ready" if resp.status_code == 200 else "starting"})
+    except Exception:
+        return JSONResponse({"status": "starting"})
+
+
 # Static files（最後にマウント: / より後で定義しないとルートが上書きされる）
 app.mount("/static", StaticFiles(directory="static"), name="static")

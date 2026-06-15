@@ -784,7 +784,18 @@
     if (!sec) return;
     sec.style.display = '';
     sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    await runForecast();
+    // バックグラウンドでRenderサーバーをウォームアップ
+    const statusEl = document.getElementById('forecastStatus');
+    if (statusEl) statusEl.textContent = '⏳ 予測サーバーを起動中...';
+    fetch('/api/ga4/forecast/warmup').then(r => r.json()).then(d => {
+      if (statusEl && statusEl.textContent.startsWith('⏳')) {
+        statusEl.textContent = d.status === 'ready'
+          ? '✅ サーバー準備完了。「実行」を押してください。'
+          : '⏳ サーバー起動中（初回は1〜2分かかります）';
+      }
+    }).catch(() => {
+      if (statusEl && statusEl.textContent.startsWith('⏳')) statusEl.textContent = '';
+    });
   }
 
   async function runForecast() {
