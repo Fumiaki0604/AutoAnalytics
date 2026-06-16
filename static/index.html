@@ -680,9 +680,8 @@
     }
 
     con.innerHTML = `
-      <div class="kpi-grid">
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
         <div class="kpi-item"><div class="kpi-label">セッション</div><div class="kpi-value">${_fmt(totSessions)}</div>${_diff(totSessions,cSessions)}</div>
-        <div class="kpi-item"><div class="kpi-label">ユーザー数</div><div class="kpi-value">${_fmt(totUsers)}</div>${_diff(totUsers,cUsers)}</div>
         <div class="kpi-item"><div class="kpi-label">ページビュー</div><div class="kpi-value">${_fmt(totPV)}</div>${_diff(totPV,cPV)}</div>
         <div class="kpi-item"><div class="kpi-label">売上</div><div class="kpi-value">${_fmtYen(totRevenue)}</div>${_diff(totRevenue,cRevenue)}</div>
       </div>
@@ -737,23 +736,26 @@
       </div>
     `;
 
-    // 折れ線グラフ（セッション + ユーザー、比較対応）
+    // 折れ線グラフ（セッション + 売上、比較対応）
     const lineCtx = document.getElementById('dashTabLineChart');
     if (lineCtx && daily.length) {
       const labels = daily.map(r => _ga4date(r.date));
-      // 比較期間は日付インデックスで合わせる（期間長が異なっても対応）
       const datasets = [
-        { label: 'セッション', data: daily.map(r=>r.sessions||0), borderColor:'#4f46e5', backgroundColor:'rgba(79,70,229,.08)', tension:.3, pointRadius:2, fill:true },
-        { label: 'ユーザー',   data: daily.map(r=>r.activeUsers||0), borderColor:'#10b981', backgroundColor:'transparent', tension:.3, pointRadius:2 },
+        { label: 'セッション', data: daily.map(r=>r.sessions||0), borderColor:'#4f46e5', backgroundColor:'rgba(79,70,229,.08)', tension:.3, pointRadius:2, fill:true, yAxisID:'ySession' },
+        { label: '売上',       data: daily.map(r=>r.totalRevenue||0), borderColor:'#f59e0b', backgroundColor:'transparent', tension:.3, pointRadius:2, yAxisID:'yRevenue' },
       ];
       if (hasComp) {
-        datasets.push({ label: 'セッション(比較)', data: compDaily.map(r=>r.sessions||0), borderColor:'#a5b4fc', backgroundColor:'transparent', tension:.3, pointRadius:2, borderDash:[4,3] });
-        datasets.push({ label: 'ユーザー(比較)',   data: compDaily.map(r=>r.activeUsers||0), borderColor:'#6ee7b7', backgroundColor:'transparent', tension:.3, pointRadius:2, borderDash:[4,3] });
+        datasets.push({ label: 'セッション(比較)', data: compDaily.map(r=>r.sessions||0), borderColor:'#a5b4fc', backgroundColor:'transparent', tension:.3, pointRadius:2, borderDash:[4,3], yAxisID:'ySession' });
+        datasets.push({ label: '売上(比較)',       data: compDaily.map(r=>r.totalRevenue||0), borderColor:'#fcd34d', backgroundColor:'transparent', tension:.3, pointRadius:2, borderDash:[4,3], yAxisID:'yRevenue' });
       }
       _dashCharts.push(new Chart(lineCtx, {
         type: 'line',
         data: { labels, datasets },
-        options: { responsive:true, plugins:{ legend:{ labels:{ font:{size:11} } } }, scales:{ x:{ ticks:{ font:{size:10}, maxTicksLimit:14 } }, y:{ ticks:{ font:{size:10} }, beginAtZero:true } } }
+        options: { responsive:true, plugins:{ legend:{ labels:{ font:{size:11} } } }, scales:{
+          x:{ ticks:{ font:{size:10}, maxTicksLimit:14 } },
+          ySession:{ type:'linear', position:'left',  ticks:{ font:{size:10} }, beginAtZero:true, title:{ display:true, text:'セッション', font:{size:10} } },
+          yRevenue:{ type:'linear', position:'right', ticks:{ font:{size:10}, callback: v=>'¥'+v.toLocaleString() }, beginAtZero:true, grid:{ drawOnChartArea:false }, title:{ display:true, text:'売上', font:{size:10} } }
+        } }
       }));
     }
 
