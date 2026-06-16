@@ -979,7 +979,8 @@ async def ga4_dashboard(
         has_comp = bool(comp_start_date and comp_end_date)
 
         # 日別推移（折れ線グラフ用）
-        daily = _fetch(["date"], ["activeUsers", "sessions", "screenPageViews", "totalRevenue"], start_date, end_date)
+        _daily_metrics = ["activeUsers", "sessions", "screenPageViews", "totalRevenue", "transactions", "sessionConversionRate", "averagePurchaseRevenue"]
+        daily = _fetch(["date"], _daily_metrics, start_date, end_date)
         daily.sort(key=lambda r: r.get("date", ""))
 
         # チャネル別
@@ -989,7 +990,7 @@ async def ga4_dashboard(
         comp_daily: list[dict] = []
         comp_channels: list[dict] = []
         if has_comp:
-            comp_daily = _fetch(["date"], ["activeUsers", "sessions", "screenPageViews", "totalRevenue"], comp_start_date, comp_end_date)
+            comp_daily = _fetch(["date"], _daily_metrics, comp_start_date, comp_end_date)
             comp_daily.sort(key=lambda r: r.get("date", ""))
             comp_channels = _agg_channels(_fetch(["sessionDefaultChannelGroup"], ["sessions", "transactions", "totalRevenue"], comp_start_date, comp_end_date))
 
