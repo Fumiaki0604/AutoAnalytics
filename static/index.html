@@ -357,6 +357,22 @@
       <div class="markdown" id="reportContent"></div>
     </div>
 
+    <!-- レポート修正チャット -->
+    <div id="refinementPanel" style="display:none;margin-top:12px;background:var(--surface);border-radius:var(--radius);box-shadow:0 1px 4px rgba(0,0,0,.08);padding:16px 20px">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">レポートを修正・追加</div>
+      <div id="refinementHistory" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <input id="refinementInput" type="text"
+          placeholder="例: 指標を購入数で見せてほしい、チャネル別の内訳も追加して"
+          style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;color:var(--text)"
+          onkeydown="if(event.key==='Enter')sendRefinement()">
+        <button onclick="sendRefinement()"
+          style="padding:8px 18px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">
+          送信
+        </button>
+      </div>
+    </div>
+
     <!-- マーケターのアドバイスパネル -->
     <div id="marketingPanel" style="display:none">
       <!-- 生成前プレースホルダー -->
@@ -443,6 +459,12 @@
   let currentReportContent = '';
   let currentAnalysisKey = '';   // 補足データ要求中のキー
   let suppFileBytes = null;      // 選択済み補足ファイル
+
+  // レポート修正チャット用 State
+  let _originalRequest = '';         // 最初の分析依頼
+  let _lastAnalysisTab = '';         // csv / ga4
+  let _lastGA4Params = {};           // property_id, start_date, end_date, include_marketing, comp...
+  let _refinementHistory = [];       // [{text: '...'}] ユーザー発言の履歴
 
   // ── Auth ──
   async function loadUser() {
@@ -1107,6 +1129,13 @@
     const request = document.getElementById('requestText').value.trim();
     if (!request) { alert('分析依頼を入力してください'); return; }
 
+    // 修正チャット用に初回依頼を保存
+    _originalRequest = request;
+    _lastAnalysisTab = currentTab;
+    _refinementHistory = [];
+    document.getElementById('refinementPanel').style.display = 'none';
+    document.getElementById('refinementHistory').innerHTML = '';
+
     let fetchPromise;
 
     if (currentTab === 'csv') {
@@ -1143,6 +1172,13 @@
         formData.append('comp_start_date', compStart);
         formData.append('comp_end_date', compEnd);
       }
+      // 修正チャット用にGA4パラメータを保存
+      _lastGA4Params = {
+        property_id: propertyId, start_date: startDate, end_date: endDate,
+        include_marketing: includeMarketing,
+        comp_start_date: (compToggle && compToggle.checked) ? document.getElementById('compStartDate').value : '',
+        comp_end_date:   (compToggle && compToggle.checked) ? document.getElementById('compEndDate').value   : '',
+      };
       fetchPromise = fetch('/api/analyze/ga4', { method: 'POST', body: formData });
     }
 
@@ -1224,6 +1260,8 @@
       document.getElementById('reportTabBar').style.display = '';
       document.querySelectorAll('#reportContent pre code').forEach(el => hljs.highlightElement(el));
       injectFollowUpButtons(ev.content);
+      // 修正チャットを表示
+      document.getElementById('refinementPanel').style.display = '';
       return;
     }
     if (ev.type === 'needs_data') {
@@ -1262,6 +1300,73 @@
     document.getElementById('dashboardPanel').style.display = tab === 'dashboard' ? '' : 'none';
   }
 
+
+  // ── Refinement Chat ──
+  async function sendRefinement() {
+    const input = document.getElementById('refinementInput');
+    const text = input.value.trim();
+    if (!text) return;
+
+    // 履歴に追加して表示
+    _refinementHistory.push(text);
+    input.value = '';
+    _renderRefinementHistory();
+
+    // 「元の分析依頼 ＋ 修正依頼」を組み合わせたリクエストを構築
+    const combined = `【元の分析依頼】\n${_originalRequest}\n\n【修正・追加依頼】\n${text}\n\n※前回の分析をベースに、上記の修正・追加を反映した新しいレポートを作成してください。`;
+
+    let fetchPromise;
+    if (_lastAnalysisTab === 'csv') {
+      const csvInput = document.getElementById('csvInput');
+      const file = csvInput && csvInput.files[0];
+      if (!file) { alert('CSV再分析にはファイルを再選択してください'); return; }
+      const fd = new FormData();
+      fd.append('csv_file', file);
+      fd.append('request_text', combined);
+      fd.append('include_marketing', 'false');
+      fetchPromise = fetch('/api/analyze', { method: 'POST', body: fd });
+    } else {
+      const p = _lastGA4Params;
+      const fd = new FormData();
+      fd.append('property_id', p.property_id);
+      fd.append('start_date', p.start_date);
+      fd.append('end_date', p.end_date);
+      fd.append('request_text', combined);
+      fd.append('include_marketing', 'false');
+      if (p.comp_start_date) { fd.append('comp_start_date', p.comp_start_date); fd.append('comp_end_date', p.comp_end_date); }
+      fetchPromise = fetch('/api/analyze/ga4', { method: 'POST', body: fd });
+    }
+
+    // レポートパネルをリセットして再分析
+    document.getElementById('reportPanel').style.display = 'none';
+    document.getElementById('reportContent').innerHTML = '';
+    document.getElementById('refinementPanel').style.display = 'none';
+    // startAnalysis と同じSSE処理を流用
+    let res;
+    try { res = await fetchPromise; } catch(e) { alert('通信エラー: ' + e.message); return; }
+    if (!res.ok) { alert('分析に失敗しました'); return; }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try { handleEvent(JSON.parse(line.slice(6))); } catch(_) {}
+      }
+    }
+  }
+
+  function _renderRefinementHistory() {
+    const el = document.getElementById('refinementHistory');
+    el.innerHTML = _refinementHistory.map(t =>
+      `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;font-size:13px;color:#1e40af">
+        <span style="font-size:11px;color:#6b7280;display:block;margin-bottom:2px">修正依頼</span>${t}</div>`
+    ).join('');
+  }
 
   // ── Follow-up buttons ──
   function injectFollowUpButtons(mdText) {
