@@ -48,8 +48,17 @@ class HypothesisGenerator:
         past_context: str = "（過去の分析履歴なし）",
         corrections_context: str = "（過去のSQLエラー履歴なし）",
     ) -> list[Hypothesis]:
+        # augment_request で付与されたシステムコンテキスト（[重要:...]等）を除去して原文を取り出す
+        import re as _re
+        raw = parsed.raw_request
+        raw_clean = _re.sub(r"^\[重要[^\]]*\][^\n]*\n+", "", raw, flags=_re.DOTALL)
+        raw_clean = _re.sub(r"\[GA4取得カラム情報\].*?\n\n", "", raw_clean, flags=_re.DOTALL)
+        raw_clean = _re.sub(r"\[クライアント資料.*?\]\n.*?\n\n", "", raw_clean, flags=_re.DOTALL)
+        raw_clean = raw_clean.strip()[:1500]
+
         prompt = self.template.format(
             summary=parsed.summary,
+            raw_request=raw_clean,
             kpi=parsed.kpi,
             dimensions=", ".join(parsed.dimensions) if parsed.dimensions else "指定なし",
             table=parsed.target_table,
