@@ -1448,6 +1448,34 @@ async def ga4_forecast(
         raise HTTPException(status_code=502, detail=f"予測API接続エラー: {e}")
 
 
+@app.post("/api/chat")
+async def chat_with_report(
+    report_context: str = Form(...),
+    question: str = Form(...),
+    session_id: str = Cookie(default=""),
+) -> JSONResponse:
+    """レポートを参照した軽量チャット応答。フルレポート再生成を行わず即時返答する。"""
+    from src.llm.llm_client import LLMMessage
+
+    system = (
+        "あなたはデータ分析アシスタントです。ユーザーが生成した分析レポートを参照して、"
+        "質問に簡潔・的確に答えてください。\n"
+        "- レポートに含まれる数字・事実に基づいて回答する\n"
+        "- レポートに含まれない情報を求められた場合は正直にその旨を伝える\n"
+        "- 見解・意見を求められた場合はデータに基づいた分析的な見解を提供する\n"
+        "- 回答はMarkdown形式で、簡潔にまとめる（長くなりすぎないように）"
+    )
+    user_msg = f"## 分析レポート\n\n{report_context}\n\n## 質問\n\n{question}"
+
+    try:
+        llm = AnthropicClient()
+        res = llm.complete([LLMMessage(role="user", content=user_msg)], system=system)
+        return JSONResponse({"reply": res.content})
+    except Exception as e:
+        logger.error(f"チャットエラー: {e}")
+        raise HTTPException(status_code=500, detail=f"チャットエラー: {e}")
+
+
 @app.get("/api/ga4/forecast/warmup")
 async def ga4_forecast_warmup() -> JSONResponse:
     """Render無料プランのコールドスタート対策: サーバーへpingを投げて起動を促す。

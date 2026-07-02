@@ -359,11 +359,11 @@
 
     <!-- レポート修正チャット -->
     <div id="refinementPanel" style="display:none;margin-top:12px;background:var(--surface);border-radius:var(--radius);box-shadow:0 1px 4px rgba(0,0,0,.08);padding:16px 20px">
-      <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">レポートを修正・追加</div>
-      <div id="refinementHistory" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
+      <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">追加質問・修正依頼</div>
+      <div id="refinementHistory" style="display:flex;flex-direction:column;gap:10px;margin-bottom:10px;max-height:400px;overflow-y:auto"></div>
       <div style="display:flex;gap:8px">
         <input id="refinementInput" type="text"
-          placeholder="例: 指標を購入数で見せてほしい、チャネル別の内訳も追加して"
+          placeholder="例: CVRの数字を教えて / 見解を聞かせて / 指標を購入数で書き直して"
           style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;color:var(--text)"
           onkeydown="if(event.key==='Enter')sendRefinement()">
         <button onclick="sendRefinement()"
@@ -464,7 +464,7 @@
   let _originalRequest = '';         // 最初の分析依頼
   let _lastAnalysisTab = '';         // csv / ga4
   let _lastGA4Params = {};           // property_id, start_date, end_date, include_marketing, comp...
-  let _refinementHistory = [];       // [{text: '...'}] ユーザー発言の履歴
+  let _refinementHistory = [];       // {type:'user'|'ai'|'report', text:'...'} の配列
 
   // ── Auth ──
   async function loadUser() {
@@ -1302,24 +1302,65 @@
 
 
   // ── Refinement Chat ──
+
+  // レポート更新が必要な依頼キーワード（これ以外はチャット返答）
+  function _isReportUpdateRequest(text) {
+    const kw = ['追加して', '修正して', '変えて', '変更して', '書き直', '作り直', '再生成',
+                '別の指標', 'もっと詳しく', 'チャネル別', '別のグラフ', 'レポートを更新',
+                '含めて', '加えて', '除いて', '絞って'];
+    return kw.some(k => text.includes(k));
+  }
+
   async function sendRefinement() {
     const input = document.getElementById('refinementInput');
     const text = input.value.trim();
     if (!text) return;
-
-    // 履歴に追加して表示
-    _refinementHistory.push(text);
     input.value = '';
+
+    _refinementHistory.push({ type: 'user', text });
     _renderRefinementHistory();
 
-    // 「元の分析依頼 ＋ 修正依頼」を組み合わせたリクエストを構築
+    if (_isReportUpdateRequest(text)) {
+      await _sendRefinementAsReport(text);
+    } else {
+      await _sendChatQuestion(text);
+    }
+  }
+
+  // 軽量チャット: レポートを参照して即時返答
+  async function _sendChatQuestion(question) {
+    // ローディングプレースホルダー
+    _refinementHistory.push({ type: 'ai', text: '考え中...' });
+    _renderRefinementHistory();
+
+    const fd = new FormData();
+    fd.append('report_context', currentReportContent);
+    fd.append('question', question);
+
+    try {
+      const res = await fetch('/api/chat', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(`サーバーエラー (${res.status})`);
+      const data = await res.json();
+      _refinementHistory[_refinementHistory.length - 1] = { type: 'ai', text: data.reply };
+    } catch(e) {
+      _refinementHistory[_refinementHistory.length - 1] = { type: 'ai', text: `⚠️ エラー: ${e.message}` };
+    }
+    _renderRefinementHistory();
+  }
+
+  // レポート更新: フルSSE再分析
+  async function _sendRefinementAsReport(text) {
     const combined = `【元の分析依頼】\n${_originalRequest}\n\n【修正・追加依頼】\n${text}\n\n※前回の分析をベースに、上記の修正・追加を反映した新しいレポートを作成してください。`;
 
     let fetchPromise;
     if (_lastAnalysisTab === 'csv') {
       const csvInput = document.getElementById('csvInput');
       const file = csvInput && csvInput.files[0];
-      if (!file) { alert('CSV再分析にはファイルを再選択してください'); return; }
+      if (!file) {
+        _refinementHistory.push({ type: 'ai', text: '⚠️ CSV再分析にはファイルを再選択してください。' });
+        _renderRefinementHistory();
+        return;
+      }
       const fd = new FormData();
       fd.append('csv_file', file);
       fd.append('request_text', combined);
@@ -1337,14 +1378,25 @@
       fetchPromise = fetch('/api/analyze/ga4', { method: 'POST', body: fd });
     }
 
-    // レポートパネルをリセットして再分析
+    // ステータス表示
+    _refinementHistory.push({ type: 'report', text: 'レポートを再生成中...' });
+    _renderRefinementHistory();
+
+    // レポートパネルをリセット
     document.getElementById('reportPanel').style.display = 'none';
     document.getElementById('reportContent').innerHTML = '';
-    document.getElementById('refinementPanel').style.display = 'none';
-    // startAnalysis と同じSSE処理を流用
+
     let res;
-    try { res = await fetchPromise; } catch(e) { alert('通信エラー: ' + e.message); return; }
-    if (!res.ok) { alert('分析に失敗しました'); return; }
+    try { res = await fetchPromise; } catch(e) {
+      _refinementHistory[_refinementHistory.length - 1] = { type: 'report', text: `⚠️ 通信エラー: ${e.message}` };
+      _renderRefinementHistory();
+      return;
+    }
+    if (!res.ok) {
+      _refinementHistory[_refinementHistory.length - 1] = { type: 'report', text: '⚠️ 分析に失敗しました。' };
+      _renderRefinementHistory();
+      return;
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
@@ -1358,14 +1410,29 @@
         try { handleEvent(JSON.parse(line.slice(6))); } catch(_) {}
       }
     }
+    _refinementHistory[_refinementHistory.length - 1] = { type: 'report', text: '✅ レポートを更新しました' };
+    _renderRefinementHistory();
   }
 
   function _renderRefinementHistory() {
     const el = document.getElementById('refinementHistory');
-    el.innerHTML = _refinementHistory.map(t =>
-      `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;font-size:13px;color:#1e40af">
-        <span style="font-size:11px;color:#6b7280;display:block;margin-bottom:2px">修正依頼</span>${t}</div>`
-    ).join('');
+    el.innerHTML = _refinementHistory.map(item => {
+      if (item.type === 'user') {
+        return `<div style="display:flex;justify-content:flex-end">
+          <div style="background:#4f46e5;color:#fff;border-radius:12px 12px 2px 12px;padding:8px 12px;font-size:13px;max-width:80%">${item.text}</div>
+        </div>`;
+      } else if (item.type === 'ai') {
+        return `<div style="display:flex;justify-content:flex-start">
+          <div style="background:#f3f4f6;border:1px solid #e5e7eb;border-radius:12px 12px 12px 2px;padding:8px 12px;font-size:13px;color:#111827;max-width:85%" class="markdown">${marked.parse(item.text)}</div>
+        </div>`;
+      } else {
+        // report ステータスバッジ
+        return `<div style="display:flex;justify-content:flex-start">
+          <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:6px 12px;font-size:12px;color:#92400e">${item.text}</div>
+        </div>`;
+      }
+    }).join('');
+    el.scrollTop = el.scrollHeight;
   }
 
   // ── Follow-up buttons ──
