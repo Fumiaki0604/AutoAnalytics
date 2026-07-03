@@ -1561,10 +1561,15 @@
   // ── Init ──
   loadUser();
 
-  // デフォルト日付（直近30日）
+  // デフォルト日付（直近30日）・未来日付を選択不可にする
   const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
   const d30 = new Date(today); d30.setDate(d30.getDate() - 30);
-  document.getElementById('endDate').value = today.toISOString().slice(0, 10);
+  ['startDate', 'endDate', 'compStartDate', 'compEndDate'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.max = todayStr;
+  });
+  document.getElementById('endDate').value = todayStr;
   document.getElementById('startDate').value = d30.toISOString().slice(0, 10);
 
   // 期間変更時にダッシュボードを自動再取得（既に表示済みの場合のみ）
