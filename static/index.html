@@ -727,6 +727,11 @@
         <canvas id="dashTabBarChart" class="dash-chart"></canvas>
       </div>
 
+      <div class="dash-card">
+        <div class="dash-card-title">チャネル別売上</div>
+        <canvas id="dashTabRevenueBarChart" class="dash-chart"></canvas>
+      </div>
+
       ${products.length ? `
       <div class="dash-card">
         <div class="dash-card-title">商品別売上 TOP${products.length}</div>
@@ -807,6 +812,35 @@
         type: 'bar',
         data: { labels: allLabels, datasets: barDatasets },
         options: { responsive:true, plugins:{ legend:{ display: hasComp, labels:{ font:{size:11} } } }, scales:{ x:{ ticks:{ font:{size:11} } }, y:{ ticks:{ font:{size:10} }, beginAtZero:true } } }
+      }));
+    }
+
+    // 棒グラフ（チャネル別売上）
+    const revBarCtx = document.getElementById('dashTabRevenueBarChart');
+    if (revBarCtx && channels.length) {
+      const existing = Chart.getChart(revBarCtx);
+      if (existing) existing.destroy();
+      const colors = ['#f59e0b','#10b981','#4f46e5','#ef4444','#8b5cf6','#06b6d4','#f97316','#64748b'];
+      const allLabels = [...new Set([...channels.map(c=>c.channel), ...compChannels.map(c=>c.channel)])];
+      const mainRevData = allLabels.map(ch => (channels.find(c=>c.channel===ch)||{totalRevenue:0}).totalRevenue||0);
+      const revDatasets = [
+        { label: '売上', data: mainRevData, backgroundColor: allLabels.map((_,i)=>colors[i%colors.length]) }
+      ];
+      if (hasComp) {
+        const compRevData = allLabels.map(ch => (compChannels.find(c=>c.channel===ch)||{totalRevenue:0}).totalRevenue||0);
+        revDatasets.push({ label: '売上(比較)', data: compRevData, backgroundColor: allLabels.map((_,i)=>colors[i%colors.length]+'80') });
+      }
+      _dashCharts.push(new Chart(revBarCtx, {
+        type: 'bar',
+        data: { labels: allLabels, datasets: revDatasets },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: hasComp, labels: { font:{size:11} } } },
+          scales: {
+            x: { ticks: { font:{size:11} } },
+            y: { ticks: { font:{size:10}, callback: v => '¥'+v.toLocaleString() }, beginAtZero: true }
+          }
+        }
       }));
     }
   }
