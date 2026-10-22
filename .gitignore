@@ -1,5 +1,6 @@
 # 環境変数（API キーを絶対にコミットしない）
 .env
+.env.local
 
 # Python
 __pycache__/
